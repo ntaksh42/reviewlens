@@ -28,6 +28,10 @@
         {
           "id": "reviewlens.changedFiles",
           "name": "Changed Files"
+        },
+        {
+          "id": "reviewlens.impact",
+          "name": "Impact"
         }
       ]
     },
@@ -58,6 +62,27 @@
         "command": "reviewlens.resolveThread",
         "title": "ReviewLens: Resolve thread",
         "icon": "$(check)"
+      },
+      {
+        "command": "reviewlens.analyzeImpact",
+        "title": "ReviewLens: Analyze Impact",
+        "icon": "$(search)"
+      },
+      {
+        "command": "reviewlens.nextFile",
+        "title": "ReviewLens: Next changed file"
+      },
+      {
+        "command": "reviewlens.prevFile",
+        "title": "ReviewLens: Previous changed file"
+      },
+      {
+        "command": "reviewlens.nextChange",
+        "title": "ReviewLens: Next change"
+      },
+      {
+        "command": "reviewlens.prevChange",
+        "title": "ReviewLens: Previous change"
       }
     ],
     "menus": {
@@ -65,6 +90,11 @@
         {
           "command": "reviewlens.refreshPrs",
           "when": "view == reviewlens.prList",
+          "group": "navigation"
+        },
+        {
+          "command": "reviewlens.analyzeImpact",
+          "when": "view == reviewlens.impact",
           "group": "navigation"
         }
       ],
@@ -90,6 +120,28 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "reviewlens.nextFile",
+        "key": "shift+alt+]",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.prevFile",
+        "key": "shift+alt+[",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.nextChange",
+        "key": "alt+]",
+        "when": "reviewlens.reviewActive && textInputFocus"
+      },
+      {
+        "command": "reviewlens.prevChange",
+        "key": "alt+[",
+        "when": "reviewlens.reviewActive && textInputFocus"
+      }
+    ],
     "configuration": {
       "title": "ReviewLens",
       "properties": {
@@ -107,6 +159,11 @@
           "type": "string",
           "default": "",
           "description": "Optional: repository name to filter PRs. Empty = all repos in the project."
+        },
+        "reviewlens.baseRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Base ref for impact analysis on the open repository (git diff <baseRef>...HEAD)."
         }
       }
     }

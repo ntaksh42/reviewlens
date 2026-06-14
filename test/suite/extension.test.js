@@ -22,17 +22,26 @@ describe('ReviewLens activation (M0)', () => {
       'reviewlens.refreshPrs',
       'reviewlens.openPr',
       'reviewlens.openFileDiff',
+      'reviewlens.toggleViewed',
+      'reviewlens.createOrReply',
+      'reviewlens.resolveThread',
+      'reviewlens.analyzeImpact',
+      'reviewlens.nextFile',
+      'reviewlens.prevFile',
+      'reviewlens.nextChange',
+      'reviewlens.prevChange',
     ]) {
       assert.ok(commands.includes(id), `missing command: ${id}`);
     }
   });
 
-  it('contributes the PR and Changed Files views', () => {
+  it('contributes the PR, Changed Files and Impact views', () => {
     const ext = vscode.extensions.getExtension(EXT_ID);
     const views = ext.packageJSON.contributes.views.reviewlens;
     const ids = views.map((v) => v.id);
     assert.ok(ids.includes('reviewlens.prList'), 'prList view missing');
     assert.ok(ids.includes('reviewlens.changedFiles'), 'changedFiles view missing');
+    assert.ok(ids.includes('reviewlens.impact'), 'impact view missing');
   });
 
   it('runs refresh with no configuration without throwing', async () => {

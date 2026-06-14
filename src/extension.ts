@@ -6,7 +6,10 @@ import { PrListTreeProvider } from './ui/prListTreeProvider';
 import { ChangedFilesTreeProvider } from './ui/changedFilesTreeProvider';
 import { DiffContentProvider, DIFF_SCHEME, sideUri } from './ui/diffContentProvider';
 import { CommentsController } from './ui/commentsController';
+import { ImpactTreeProvider } from './ui/impactTreeProvider';
+import { NavigationCursor } from './ui/navigationCursor';
 import { ViewedStore } from './infra/state/viewedStore';
+import { analyzeImpact } from './infra/lsp/impactAnalyzer';
 import { ChangedFile, PullRequestSummary } from './domain/models';
 import { createLogger } from './common/logger';
 
@@ -21,6 +24,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const changedFiles = new ChangedFilesTreeProvider();
   const diffProvider = new DiffContentProvider();
   const comments = new CommentsController(reviewService);
+  const impact = new ImpactTreeProvider();
+  const cursor = new NavigationCursor();
   const changedFilesView = vscode.window.createTreeView('reviewlens.changedFiles', {
     treeDataProvider: changedFiles,
   });
@@ -29,6 +34,7 @@ export function activate(context: vscode.ExtensionContext): void {
     changedFilesView,
     comments,
     vscode.window.registerTreeDataProvider('reviewlens.prList', prList),
+    vscode.window.registerTreeDataProvider('reviewlens.impact', impact),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider),
 
     vscode.commands.registerCommand('reviewlens.refreshPrs', () => prList.refresh()),
@@ -57,6 +63,8 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         changedFiles.setFiles(data.files, viewedStore.get(pr.id));
         changedFilesView.description = `#${pr.id} ${pr.title}`;
+        cursor.setFiles(data.files);
+        void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
       } catch (e) {
         changedFiles.setFiles([], new Set());
         vscode.window.showErrorMessage(
@@ -82,6 +90,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!current) {
         return;
       }
+      cursor.setCurrent(file);
       const prId = current.pr.id;
       const left = sideUri(prId, 'left', file.path);
       const right = sideUri(prId, 'right', file.path);
@@ -107,6 +116,61 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('reviewlens.resolveThread', (thread: vscode.CommentThread) =>
       comments.resolve(thread)
+    ),
+
+    vscode.commands.registerCommand('reviewlens.analyzeImpact', async () => {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (!folder) {
+        impact.setMessage('Open the repository folder to analyze impact.');
+        return;
+      }
+      const baseRef = vscode.workspace
+        .getConfiguration('reviewlens')
+        .get<string>('baseRef', 'main');
+      await vscode.window.withProgress(
+        { location: { viewId: 'reviewlens.impact' } },
+        async () => {
+          try {
+            const roots = await analyzeImpact(folder.uri.fsPath, baseRef);
+            impact.setResults(roots);
+          } catch (e) {
+            impact.setMessage(`Impact analysis failed: ${e instanceof Error ? e.message : e}`);
+          }
+        }
+      );
+    }),
+
+    vscode.commands.registerCommand(
+      'reviewlens.openImpactLocation',
+      async (filePath: string, line: number) => {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+        const editor = await vscode.window.showTextDocument(doc);
+        const pos = new vscode.Position(line, 0);
+        editor.selection = new vscode.Selection(pos, pos);
+        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+      }
+    ),
+
+    vscode.commands.registerCommand('reviewlens.nextFile', () => {
+      const file = cursor.next();
+      if (file) {
+        void vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+      }
+    }),
+
+    vscode.commands.registerCommand('reviewlens.prevFile', () => {
+      const file = cursor.prev();
+      if (file) {
+        void vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+      }
+    }),
+
+    vscode.commands.registerCommand('reviewlens.nextChange', () =>
+      vscode.commands.executeCommand('workbench.action.compareEditor.nextChange')
+    ),
+
+    vscode.commands.registerCommand('reviewlens.prevChange', () =>
+      vscode.commands.executeCommand('workbench.action.compareEditor.previousChange')
     )
   );
 
