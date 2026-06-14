@@ -3,13 +3,19 @@
 Navigation-first pull request review for Azure DevOps, as a VS Code extension.
 See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
 
-## Status: M0 (skeleton + ADO connectivity)
+## Features
 
-Implemented:
-- Clean 4-layer skeleton: `src/domain` · `src/app` · `src/infra` · `src/ui`
-- PAT auth via SecretStorage (`ReviewLens: Sign in (PAT)`)
-- `AdoClient` (azure-devops-node-api) — lists active pull requests
-- "Pull Requests" tree view in the ReviewLens activity-bar container
+- **PR list** — active pull requests for the configured org/project.
+- **Review a PR** — click a PR to load its changed files; click a file to open a
+  **base ↔ head diff** (read-only virtual documents).
+- **Comments** — ADO comment threads render inline on the head side; create,
+  reply, and resolve, all round-tripping to ADO. Commenting is allowed on every
+  line, so unchanged context can be annotated too.
+- **Viewed** — toggle a file as viewed (persisted per PR).
+- **Impact analysis** (the differentiator) — for each changed function, list its
+  callers and flag the ones **not changed in this PR** (the blast radius). Runs
+  on the open repository via the active language server.
+- **Keyboard navigation** — jump between changed files and between diff changes.
 
 ## Develop
 
@@ -17,26 +23,44 @@ Implemented:
 npm install
 npm run build      # esbuild bundle -> dist/extension.js
 npm run typecheck  # tsc --noEmit
+npm test           # @vscode/test-electron activation test
 ```
 
 Press `F5` (Run ReviewLens) to launch the Extension Development Host.
 
 ## Configure
 
-In Settings (or `.vscode/settings.json` of the host window):
+In Settings of the host window:
 - `reviewlens.orgUrl` — e.g. `https://dev.azure.com/your-org`
 - `reviewlens.project` — project name
 - `reviewlens.repository` — optional, to filter to one repo
+- `reviewlens.baseRef` — base ref for impact analysis (default `main`)
 
-Then run **ReviewLens: Sign in (PAT)** (scope: Code Read & Write) and the PR list loads.
+Run **ReviewLens: Sign in (PAT)** (scope: Code Read & Write); the PAT is stored
+in SecretStorage.
+
+## Keybindings (when a review is active)
+
+| Action | Key |
+|---|---|
+| Next / previous changed file | `shift+alt+]` / `shift+alt+[` |
+| Next / previous change in diff | `alt+]` / `alt+[` |
 
 ## Layout
 
 ```
 src/
-  domain/   models & types (pure, no vscode/ADO deps) — SPEC §8
-  app/      use-cases (PullRequestService)
-  infra/    external I/O (config, ADO client, PAT auth)
-  ui/       tree views, commands
+  domain/   models & types (pure) — SPEC §8
+  app/      use-cases (PullRequestService, ReviewService)
+  infra/    ADO client + auth + config, viewed store, impact analyzer (LSP)
+  ui/       tree views, diff/virtual-doc, comments, navigation
   common/   logger
 ```
+
+## Not yet implemented
+
+- **Suggested edits** (FR-23) — ADO has no native suggestion UI; deferred.
+- **Local checkout** — the diff uses the ADO content API; checking out the PR
+  branch (for go-to-definition / grep on the diff itself) is deferred to when
+  impact analysis is wired to the PR flow (currently it runs on the open repo).
+- **AI** (PR summary / risk / hunk explanation) — Phase 3.
