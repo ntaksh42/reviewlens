@@ -68,6 +68,20 @@ export class CommentsController {
     this.byUri.clear();
   }
 
+  /**
+   * Opens a fresh comment input on the cursor line of the active head-side diff,
+   * so a thread can be started without reaching for the gutter mouse target.
+   * Delegates to VS Code's native add-comment action, which both shows the
+   * input box and focuses it.
+   */
+  async addCommentAtCursor(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !parseRightUri(editor.document.uri)) {
+      return;
+    }
+    await vscode.commands.executeCommand('workbench.action.addComment');
+  }
+
   async createOrReply(reply: vscode.CommentReply): Promise<void> {
     if (!reply?.thread || !reply.text?.trim()) {
       return;

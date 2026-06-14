@@ -12,8 +12,9 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
   **base ↔ head diff** (read-only virtual documents).
 - **Comments** — ADO comment threads render inline on the head side; create,
   reply, and resolve, all round-tripping to ADO. Commenting is allowed on every
-  line, so unchanged context can be annotated too. Submit a comment with
-  `ctrl+enter` (`cmd+enter` on macOS).
+  line, so unchanged context can be annotated too. Start a comment on the
+  current line with `ctrl+;` (`cmd+;` on macOS) and submit it with
+  `ctrl+enter` (`cmd+enter` on macOS) — no mouse required.
 - **Viewed** — toggle a file as viewed (persisted per PR).
 - **Impact analysis** (the differentiator) — for each changed function, list its
   callers and flag the ones **not changed in this PR** (the blast radius). Runs
@@ -48,6 +49,7 @@ in SecretStorage.
 |---|---|
 | Next / previous changed file | `shift+alt+]` / `shift+alt+[` |
 | Next / previous change in diff | `alt+down` / `alt+up` |
+| Add comment on current line | `ctrl+;` (`cmd+;` on macOS) |
 | Submit comment | `ctrl+enter` (`cmd+enter` on macOS) |
 
 ## Layout
