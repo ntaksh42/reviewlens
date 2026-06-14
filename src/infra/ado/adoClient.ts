@@ -140,11 +140,8 @@ export class AdoClient {
   /** Changed files + base/head commits for the latest PR iteration (M1a). */
   async getReview(prId: number, repositoryId: string): Promise<ReviewData> {
     const git = await this.git();
-    const iterations = await git.getPullRequestIterations(
-      repositoryId,
-      prId,
-      this.config.project
-    );
+    const iterations =
+      (await git.getPullRequestIterations(repositoryId, prId, this.config.project)) ?? [];
     const last = iterations[iterations.length - 1];
     const baseCommit =
       last?.commonRefCommit?.commitId ?? last?.targetRefCommit?.commitId;
@@ -157,7 +154,7 @@ export class AdoClient {
       this.config.project
     );
 
-    const files: ChangedFile[] = (changes.changeEntries ?? [])
+    const files: ChangedFile[] = (changes?.changeEntries ?? [])
       .filter((e) => e.item?.path && !e.item.isFolder)
       .map((e) => ({
         path: stripLead(e.item!.path!),

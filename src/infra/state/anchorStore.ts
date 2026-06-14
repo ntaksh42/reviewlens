@@ -31,6 +31,11 @@ export class AnchorStore {
     await this.state.update(this.key(prId), map);
   }
 
+  /** Forget a PR's anchor snapshots (e.g. once it is completed/abandoned). */
+  async clear(prId: number): Promise<void> {
+    await this.state.update(this.key(prId), undefined);
+  }
+
   private all(prId: number): Record<string, AnchorSnapshot> {
     return { ...this.state.get<Record<string, AnchorSnapshot>>(this.key(prId), {}) };
   }

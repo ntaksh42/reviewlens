@@ -27,6 +27,11 @@ export class DiffContentProvider implements vscode.TextDocumentContentProvider {
   provideTextDocumentContent(uri: vscode.Uri): string {
     return this.contents.get(uri.toString()) ?? '';
   }
+
+  dispose(): void {
+    this.contents.clear();
+    this._onDidChange.dispose();
+  }
 }
 
 /** Distinct URI per side, preserving the file extension for highlighting. */
