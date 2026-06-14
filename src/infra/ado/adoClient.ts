@@ -12,6 +12,14 @@ import { AdoConfig } from '../config';
 import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../../domain/models';
 import { FileStatus, ThreadStatus } from '../../domain/types';
 
+/** Character span (1-based line + column) for anchoring a comment. */
+export interface CommentTarget {
+  startLine: number;
+  startOffset: number;
+  endLine: number;
+  endOffset: number;
+}
+
 /**
  * Thin wrapper over azure-devops-node-api. All ADO REST access goes through here
  * (SPEC §7.3).
@@ -111,12 +119,12 @@ export class AdoClient {
     return (threads ?? []).filter((t) => !t.isDeleted).map(mapThread);
   }
 
-  /** Create a new thread anchored to a line on the head (right) side. */
+  /** Create a thread anchored to a character span on the head (right) side. */
   async createComment(
     prId: number,
     repositoryId: string,
     filePath: string,
-    line: number,
+    target: CommentTarget,
     content: string
   ): Promise<void> {
     const git = await this.connection.getGitApi();
@@ -125,8 +133,8 @@ export class AdoClient {
       comments: [{ parentCommentId: 0, content, commentType: CommentType.Text }],
       threadContext: {
         filePath: ensureLead(filePath),
-        rightFileStart: { line, offset: 1 },
-        rightFileEnd: { line, offset: 1 },
+        rightFileStart: { line: target.startLine, offset: target.startOffset },
+        rightFileEnd: { line: target.endLine, offset: target.endOffset },
       },
     };
     await git.createThread(thread, repositoryId, prId, this.config.project);

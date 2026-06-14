@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ReviewService } from '../app/reviewService';
+import { CommentTarget } from '../infra/ado/adoClient';
 import { Comment as DomainComment } from '../domain/models';
 import { DIFF_SCHEME, parseRightUri } from './diffContentProvider';
 
@@ -80,8 +81,7 @@ export class CommentsController {
       if (thread.adoThreadId) {
         await this.review.reply(thread.adoThreadId, reply.text);
       } else {
-        const line = thread.range ? thread.range.start.line + 1 : 1;
-        await this.review.createComment(info.filePath, line, reply.text);
+        await this.review.createComment(info.filePath, targetFromSelection(thread), reply.text);
         thread.dispose();
       }
       this.renderForFile(info.filePath, thread.uri);
@@ -115,4 +115,26 @@ function toComment(c: DomainComment): vscode.Comment {
     mode: vscode.CommentMode.Preview,
     author: { name: c.author },
   };
+}
+
+/**
+ * Anchor the comment to the current selection (a keyword span) when one exists
+ * on the thread's line; otherwise fall back to the whole line. VS Code columns
+ * are 0-based; ADO offsets are 1-based.
+ */
+function targetFromSelection(thread: vscode.CommentThread): CommentTarget {
+  const line = (thread.range ? thread.range.start.line : 0) + 1;
+  const editor = vscode.window.visibleTextEditors.find(
+    (e) => e.document.uri.toString() === thread.uri.toString()
+  );
+  const sel = editor?.selection;
+  if (sel && !sel.isEmpty && thread.range && sel.start.line === thread.range.start.line) {
+    return {
+      startLine: sel.start.line + 1,
+      startOffset: sel.start.character + 1,
+      endLine: sel.end.line + 1,
+      endOffset: sel.end.character + 1,
+    };
+  }
+  return { startLine: line, startOffset: 1, endLine: line, endOffset: 1 };
 }

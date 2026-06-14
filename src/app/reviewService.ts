@@ -1,5 +1,5 @@
 import { AuthProvider } from '../infra/ado/authProvider';
-import { AdoClient } from '../infra/ado/adoClient';
+import { AdoClient, CommentTarget } from '../infra/ado/adoClient';
 import { createAdoClient } from '../infra/ado/clientFactory';
 import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../domain/models';
 import { Side } from '../domain/types';
@@ -45,12 +45,12 @@ export class ReviewService {
     return this.active?.threads.filter((t) => t.anchor?.filePath === path) ?? [];
   }
 
-  async createComment(filePath: string, line: number, text: string): Promise<void> {
+  async createComment(filePath: string, target: CommentTarget, text: string): Promise<void> {
     if (!this.active) {
       return;
     }
     const { client, pr, data } = this.active;
-    await client.createComment(pr.id, data.repositoryId, filePath, line, text);
+    await client.createComment(pr.id, data.repositoryId, filePath, target, text);
     await this.refreshThreads();
   }
 
