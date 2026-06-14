@@ -39,6 +39,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('reviewlens.refreshPrs', () => prList.refresh()),
 
+    vscode.commands.registerCommand('reviewlens.filterPrs', async () => {
+      const value = await vscode.window.showInputBox({
+        prompt: 'Filter pull requests (title, author, repository, project, branch)',
+        placeHolder: 'e.g. bugfix, alice, my-repo',
+        value: prList.filterText,
+      });
+      if (value !== undefined) {
+        prList.setFilter(value);
+      }
+    }),
+
+    vscode.commands.registerCommand('reviewlens.clearFilter', () => prList.setFilter('')),
+
     vscode.commands.registerCommand('reviewlens.signIn', async () => {
       const pat = await auth.promptAndStore();
       if (pat) {

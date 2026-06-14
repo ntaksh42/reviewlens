@@ -50,6 +50,16 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "reviewlens.filterPrs",
+        "title": "ReviewLens: Filter Pull Requests",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "reviewlens.clearFilter",
+        "title": "ReviewLens: Clear Pull Request Filter",
+        "icon": "$(filter-filled)"
+      },
+      {
         "command": "reviewlens.toggleViewed",
         "title": "ReviewLens: Toggle viewed",
         "icon": "$(check)"
@@ -88,9 +98,19 @@
     "menus": {
       "view/title": [
         {
+          "command": "reviewlens.filterPrs",
+          "when": "view == reviewlens.prList && !reviewlens.prFilterActive",
+          "group": "navigation@1"
+        },
+        {
+          "command": "reviewlens.clearFilter",
+          "when": "view == reviewlens.prList && reviewlens.prFilterActive",
+          "group": "navigation@1"
+        },
+        {
           "command": "reviewlens.refreshPrs",
           "when": "view == reviewlens.prList",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "reviewlens.analyzeImpact",
@@ -133,13 +153,19 @@
       },
       {
         "command": "reviewlens.nextChange",
-        "key": "alt+]",
+        "key": "alt+down",
         "when": "reviewlens.reviewActive && textInputFocus"
       },
       {
         "command": "reviewlens.prevChange",
-        "key": "alt+[",
+        "key": "alt+up",
         "when": "reviewlens.reviewActive && textInputFocus"
+      },
+      {
+        "command": "reviewlens.createOrReply",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "commentEditorFocused && commentController == reviewlens"
       }
     ],
     "configuration": {

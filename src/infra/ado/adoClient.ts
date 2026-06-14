@@ -38,6 +38,7 @@ export class AdoClient {
       id: pr.pullRequestId ?? 0,
       title: pr.title ?? '(no title)',
       author: pr.createdBy?.displayName ?? 'unknown',
+      project: pr.repository?.project?.name ?? this.config.project,
       repository: pr.repository?.name ?? '',
       repositoryId: pr.repository?.id ?? '',
       sourceBranch: shortBranch(pr.sourceRefName),
