@@ -167,8 +167,8 @@
       },
       {
         "command": "reviewlens.addComment",
-        "key": "ctrl+alt+c",
-        "mac": "cmd+alt+c",
+        "key": "ctrl+;",
+        "mac": "cmd+;",
         "when": "reviewlens.reviewActive && editorTextFocus && resourceScheme == reviewlens"
       },
       {
