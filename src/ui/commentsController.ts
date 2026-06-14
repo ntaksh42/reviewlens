@@ -61,6 +61,11 @@ export class CommentsController {
     return this.headPath(uri) !== undefined;
   }
 
+  /** Repo-relative path of a head-side review doc, or undefined if not one. */
+  headDocumentPath(uri: vscode.Uri): string | undefined {
+    return this.headPath(uri);
+  }
+
   dispose(): void {
     this.controller.dispose();
   }

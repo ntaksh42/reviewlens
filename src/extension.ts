@@ -13,11 +13,20 @@ import { AnchorStore } from './infra/state/anchorStore';
 import { analyzeImpact } from './infra/lsp/impactAnalyzer';
 import {
   resolveLocalRepo,
+  ensureLocalClone,
   ensureWorktree,
   pruneWorktrees,
+  listWorktrees,
+  removeWorktrees,
+  getCurrentBranch,
   Worktree,
 } from './infra/git/worktree';
-import { getLocalRepoPath, getLocalWorktreeLimit } from './infra/config';
+import {
+  getLocalRepoPath,
+  getLocalWorktreeLimit,
+  getLocalClonePartial,
+  getAutoAttachBranchPr,
+} from './infra/config';
 import { ChangedFile, PullRequestSummary } from './domain/models';
 import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
@@ -47,12 +56,22 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const cacheRoot = (): string =>
     path.join(context.globalStorageUri.fsPath, 'worktrees');
+  const cloneStoreRoot = (): string =>
+    path.join(context.globalStorageUri.fsPath, 'clones');
+
+  /** Suffix the changed-files view title with the local-review indicator. */
+  const LOCAL_BADGE = ' · local';
+  function showLocalBadge(on: boolean): void {
+    const base = (changedFilesView.description ?? '').replace(LOCAL_BADGE, '');
+    changedFilesView.description = on ? `${base}${LOCAL_BADGE}` : base || undefined;
+  }
 
   function teardownLocal(): void {
     const wt = activeWorktree;
     activeWorktree = undefined;
     reviewService.setLocalPath(undefined);
     void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', false);
+    showLocalBadge(false);
     if (!wt) {
       return;
     }
@@ -68,12 +87,139 @@ export function activate(context: vscode.ExtensionContext): void {
   /** Tear down all review UI — used after a PR leaves the active list. */
   function closeReview(): void {
     teardownLocal();
+    attachedBranchKey = undefined;
     diffProvider.clear();
     comments.clearAll();
     changedFiles.setFiles([], new Set());
     changedFilesView.description = undefined;
     cursor.setFiles([]);
     void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', false);
+  }
+
+  // Live "branch attach" review: the open workspace is the PR's branch, so its
+  // working-tree files are the head side and PR comments render inline on them
+  // (no worktree checkout). `attachedBranchKey` is `${repoRoot}#${branch}`, so a
+  // branch switch is detected and re-attached.
+  let attachedBranchKey: string | undefined;
+  // Branch key the auto path last *tried* (attached or not), so a branch with no
+  // PR isn't re-queried on every editor switch. Reset on branch change.
+  let autoTriedKey: string | undefined;
+
+  /** Locate the workspace git repo that matches the configured ADO repo + its branch. */
+  async function resolveOpenBranchRepo(): Promise<
+    { repoRoot: string; branch: string } | undefined
+  > {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    for (const f of folders) {
+      const branch = await getCurrentBranch(f.uri.fsPath);
+      if (branch) {
+        return { repoRoot: f.uri.fsPath, branch };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Find the active PR for the open branch and show its comments inline on the
+   * working-tree files. `silent` suppresses "no PR" / error popups so the
+   * automatic path stays quiet.
+   */
+  async function attachToBranchPr(silent: boolean): Promise<void> {
+    const open = await resolveOpenBranchRepo();
+    if (!open) {
+      if (!silent) {
+        vscode.window.showWarningMessage('ReviewLens: open a git repository folder first.');
+      }
+      return;
+    }
+    const key = `${open.repoRoot}#${open.branch}`;
+    let pr: PullRequestSummary | undefined;
+    try {
+      pr = await prService.findByBranch(open.branch);
+    } catch (e) {
+      if (!silent) {
+        vscode.window.showErrorMessage(
+          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+      return;
+    }
+    if (!pr) {
+      if (!silent) {
+        vscode.window.showInformationMessage(
+          `ReviewLens: no active pull request for branch "${open.branch}".`
+        );
+      }
+      return;
+    }
+    try {
+      teardownLocal();
+      diffProvider.clear();
+      comments.clearAll();
+      const data = await vscode.window.withProgress(
+        { location: { viewId: 'reviewlens.changedFiles' } },
+        () => reviewService.open(pr!)
+      );
+      // The open working tree is the head side: point review at it so comments
+      // render on the real files and commenting targets them.
+      reviewService.setLocalPath(open.repoRoot);
+      changedFiles.setFiles(data.files, viewedStore.get(pr.id));
+      changedFilesView.description = `#${pr.id} ${pr.title}${LOCAL_BADGE}`;
+      cursor.setFiles(data.files);
+      attachedBranchKey = key;
+      void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
+      void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', true);
+      // Render comments on the file already open, if it's one of the PR's files.
+      await renderActiveEditor();
+      if (!silent) {
+        vscode.window.showInformationMessage(
+          `ReviewLens: showing comments for PR #${pr.id} on branch "${open.branch}".`
+        );
+      }
+    } catch (e) {
+      if (!silent) {
+        vscode.window.showErrorMessage(
+          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+  }
+
+  /** Auto-attach when enabled and the open branch changed since the last attempt. */
+  async function maybeAutoAttach(): Promise<void> {
+    if (!getAutoAttachBranchPr()) {
+      return;
+    }
+    const open = await resolveOpenBranchRepo();
+    if (!open) {
+      return;
+    }
+    const key = `${open.repoRoot}#${open.branch}`;
+    // Already attached to this branch, or already tried it and found no PR:
+    // don't re-query ADO on every editor switch. A branch switch changes `key`.
+    if (key === attachedBranchKey || key === autoTriedKey) {
+      return;
+    }
+    autoTriedKey = key;
+    await attachToBranchPr(true);
+  }
+
+  /**
+   * In live branch-attach mode, render the open PR's comments onto the active
+   * editor when it's one of the PR's changed files (a real working-tree file).
+   */
+  async function renderActiveEditor(): Promise<void> {
+    if (!attachedBranchKey) {
+      return;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+    const filePath = comments.headDocumentPath(editor.document.uri);
+    if (filePath) {
+      await comments.renderForFile(filePath, editor.document.uri);
+    }
   }
 
   context.subscriptions.push(
@@ -108,6 +254,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('reviewlens.signOut', async () => {
       teardownLocal();
+      // Signing out drops local access, so purge the cached worktrees too.
+      try {
+        const cached = await listWorktrees(cacheRoot());
+        await removeWorktrees(cacheRoot(), cached.map((w) => w.worktreePath));
+      } catch {
+        // best-effort cleanup; don't block sign-out
+      }
       await auth.clear();
       vscode.window.showInformationMessage('ReviewLens: signed out.');
       await prList.refresh();
@@ -116,6 +269,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('reviewlens.openPr', async (pr: PullRequestSummary) => {
       try {
         teardownLocal();
+        attachedBranchKey = undefined;
         diffProvider.clear();
         comments.clearAll();
         const data = await vscode.window.withProgress(
@@ -146,6 +300,17 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
 
+    // Keybinding-friendly viewed toggle: acts on the file the cursor points at.
+    vscode.commands.registerCommand('reviewlens.toggleViewedCurrent', async () => {
+      const pr = reviewService.current?.pr;
+      const file = cursor.current();
+      if (!pr || !file) {
+        return;
+      }
+      const nowViewed = await viewedStore.toggle(pr.id, file.path);
+      changedFiles.setViewed(file.path, nowViewed);
+    }),
+
     vscode.commands.registerCommand('reviewlens.reviewLocally', async () => {
       const current = reviewService.current;
       if (!current) {
@@ -169,15 +334,25 @@ export function activate(context: vscode.ExtensionContext): void {
           { location: { viewId: 'reviewlens.changedFiles' }, title: 'Checking out PR locally…' },
           async () => {
             const candidates = folders.map((f) => f.uri.fsPath);
-            const repo = await resolveLocalRepo(
+            let repo = await resolveLocalRepo(
               current.pr.remoteUrl,
               candidates,
               getLocalRepoPath()
             );
             if (!repo) {
-              throw new Error(
-                'no local clone found — open the repo as a folder or set reviewlens.localRepoPath.'
-              );
+              // No existing clone matched: auto-clone (blobless by default) into
+              // the extension's clone cache using the PAT.
+              const pat = await auth.getPat();
+              if (!pat) {
+                throw new Error('sign in with a PAT first.');
+              }
+              if (!current.pr.remoteUrl) {
+                throw new Error('the PR has no remote URL to clone.');
+              }
+              repo = await ensureLocalClone(current.pr.remoteUrl, cloneStoreRoot(), {
+                pat,
+                blobless: getLocalClonePartial(),
+              });
             }
             const wt = await ensureWorktree(repo, headSha, cacheRoot());
             activeWorktree = wt;
@@ -200,6 +375,7 @@ export function activate(context: vscode.ExtensionContext): void {
           }
         );
         void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', true);
+        showLocalBadge(true);
         vscode.window.showInformationMessage(
           'ReviewLens: local review on. Reopen a file to navigate its neighbors.'
         );
@@ -214,6 +390,62 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('reviewlens.stopLocalReview', async () => {
       teardownLocal();
       vscode.window.showInformationMessage('ReviewLens: local review off.');
+    }),
+
+    // Open a PR in the browser. The list passes a tree node ({ pr }); a
+    // keybinding passes nothing, so fall back to the currently open PR.
+    vscode.commands.registerCommand(
+      'reviewlens.openInBrowser',
+      async (arg?: PullRequestSummary | { pr: PullRequestSummary }) => {
+        const fromArg = arg && 'pr' in arg ? arg.pr : (arg as PullRequestSummary | undefined);
+        const target = fromArg ?? reviewService.current?.pr;
+        if (!target?.url) {
+          vscode.window.showWarningMessage('ReviewLens: no pull request to open.');
+          return;
+        }
+        await vscode.env.openExternal(vscode.Uri.parse(target.url));
+      }
+    ),
+
+    // Manage the local-review worktree cache: pick cached worktrees to delete.
+    vscode.commands.registerCommand('reviewlens.cleanWorktrees', async () => {
+      const cached = await listWorktrees(cacheRoot());
+      if (cached.length === 0) {
+        vscode.window.showInformationMessage('ReviewLens: no cached worktrees.');
+        return;
+      }
+      interface WtItem extends vscode.QuickPickItem {
+        worktreePath: string;
+      }
+      const items: WtItem[] = cached.map((w) => ({
+        label: path.basename(w.worktreePath),
+        description: w.headSha.slice(0, 12),
+        detail: w.worktreePath,
+        worktreePath: w.worktreePath,
+      }));
+      const picked = await vscode.window.showQuickPick(items, {
+        canPickMany: true,
+        title: 'ReviewLens — delete cached worktrees',
+        placeHolder: 'Select worktrees to remove from disk',
+      });
+      if (!picked || picked.length === 0) {
+        return;
+      }
+      const paths = picked.map((p) => p.worktreePath);
+      // If we're deleting the active one, tear local review down first.
+      if (activeWorktree && paths.includes(activeWorktree.worktreePath)) {
+        teardownLocal();
+      }
+      try {
+        await removeWorktrees(cacheRoot(), paths);
+        vscode.window.showInformationMessage(
+          `ReviewLens: removed ${paths.length} worktree(s).`
+        );
+      } catch (e) {
+        vscode.window.showErrorMessage(
+          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
     }),
 
     vscode.commands.registerCommand('reviewlens.openFileDiff', async (file: ChangedFile) => {
@@ -404,14 +636,27 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.commands.executeCommand('workbench.action.compareEditor.previousChange')
     ),
 
+    vscode.commands.registerCommand('reviewlens.attachToBranchPr', () =>
+      attachToBranchPr(false)
+    ),
+
     // Track whether the active editor is a head-side review doc, so the
     // "add comment" key (Ctrl+[) only overrides outdent on those documents.
+    // In live branch-attach mode, also (re)render the PR's comments onto the
+    // file being opened, and pick up a branch switch.
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       void vscode.commands.executeCommand(
         'setContext',
         'reviewlens.headEditor',
         editor ? comments.isHeadDocument(editor.document.uri) : false
       );
+      void maybeAutoAttach();
+      void renderActiveEditor();
+    }),
+
+    // A folder added/removed (e.g. opening the repo) can change the open branch.
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void maybeAutoAttach();
     })
   );
 
@@ -422,6 +667,7 @@ export function activate(context: vscode.ExtensionContext): void {
     active ? comments.isHeadDocument(active.document.uri) : false
   );
   void prList.refresh();
+  void maybeAutoAttach();
   log.info('ReviewLens activated.');
 }
 

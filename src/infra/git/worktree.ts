@@ -30,10 +30,15 @@ export async function resolveLocalRepo(
   candidateFolders: string[],
   configuredPath: string | undefined
 ): Promise<string | undefined> {
-  if (configuredPath && (await isGitRepo(configuredPath))) {
-    return configuredPath;
-  }
   const want = normalizeRemote(remoteUrl);
+  // Only use an explicitly configured clone when its origin matches this PR's
+  // repo — otherwise a path set for repo A would be misused to review repo B.
+  if (configuredPath && (await isGitRepo(configuredPath))) {
+    const origin = await tryOrigin(configuredPath);
+    if (want && origin && normalizeRemote(origin) === want) {
+      return configuredPath;
+    }
+  }
   for (const folder of candidateFolders) {
     const root = await repoRoot(folder);
     if (!root) {
@@ -49,6 +54,93 @@ export async function resolveLocalRepo(
     }
   }
   return undefined;
+}
+
+/**
+ * Current branch name of the git repo at `folder` (its working tree's checked-out
+ * branch), or undefined when the folder is not a repo or is in detached HEAD.
+ * Used to match the open workspace branch against a PR's source branch.
+ */
+export async function getCurrentBranch(folder: string): Promise<string | undefined> {
+  const root = await repoRoot(folder);
+  if (!root) {
+    return undefined;
+  }
+  try {
+    const branch = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    return branch && branch !== 'HEAD' ? branch : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Ensures a local (bare, optionally blobless) clone of the ADO repo exists in the
+ * clone cache, authenticating with the PAT. Blobless clones keep commits + trees
+ * but fetch file blobs on demand, so even very large repos clone quickly and only
+ * the files you open are downloaded. The PAT is stored as an http.extraHeader in
+ * the clone's local config so lazy/iteration fetches can authenticate.
+ */
+export async function ensureLocalClone(
+  remoteUrl: string,
+  cloneRoot: string,
+  opts: { pat: string; blobless: boolean }
+): Promise<string> {
+  const dir = path.join(cloneRoot, sanitize(cloneKey(remoteUrl)));
+  if (await isGitRepo(dir)) {
+    // Refresh stored auth in case the PAT was rotated since the last review.
+    await setAuth(dir, opts.pat);
+    return dir;
+  }
+  await fs.promises.mkdir(cloneRoot, { recursive: true });
+  const args = ['-c', authHeader(opts.pat), 'clone', '--bare'];
+  if (opts.blobless) {
+    args.push('--filter=blob:none');
+  }
+  args.push(remoteUrl, dir);
+  try {
+    await git(cloneRoot, args);
+  } catch (e) {
+    // Never surface the auth header in an error message.
+    throw new Error(`clone failed for ${redact(remoteUrl)}: ${cleanGitError(e)}`);
+  }
+  await setAuth(dir, opts.pat);
+  return dir;
+}
+
+async function setAuth(repoPath: string, pat: string): Promise<void> {
+  await git(repoPath, ['config', '--local', 'http.extraHeader', basicAuth(pat)]);
+}
+
+/** `-c http.extraHeader=...` for a single authenticated git invocation. */
+function authHeader(pat: string): string {
+  return `http.extraHeader=${basicAuth(pat)}`;
+}
+
+function basicAuth(pat: string): string {
+  return `Authorization: Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+}
+
+function cloneKey(remoteUrl: string): string {
+  return normalizeRemote(remoteUrl).replace(/\//g, '_');
+}
+
+async function tryOrigin(repo: string): Promise<string | undefined> {
+  try {
+    return await git(repo, ['remote', 'get-url', 'origin']);
+  } catch {
+    return undefined;
+  }
+}
+
+function redact(url: string): string {
+  return url.replace(/\/\/[^@]+@/, '//');
+}
+
+/** Strip any embedded auth header from a git error before showing it. */
+function cleanGitError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.replace(/Authorization: Basic [A-Za-z0-9+/=]+/g, 'Authorization: Basic ***');
 }
 
 /**
@@ -108,6 +200,36 @@ export async function pruneWorktrees(
   }
 }
 
+/** A cached worktree as recorded in the manifest, for listing/cleanup UIs. */
+export interface CachedWorktree {
+  worktreePath: string;
+  repoPath: string;
+  headSha: string;
+  lastUsedMs: number;
+}
+
+/** Lists the worktrees currently tracked in the cache, most-recently-used first. */
+export async function listWorktrees(cacheRoot: string): Promise<CachedWorktree[]> {
+  const entries = await readManifest(cacheRoot);
+  return entries.sort((a, b) => b.lastUsedMs - a.lastUsedMs);
+}
+
+/**
+ * Removes the given cached worktrees from disk and the manifest. Paths not in the
+ * manifest are ignored. Used by manual cleanup and sign-out teardown.
+ */
+export async function removeWorktrees(cacheRoot: string, worktreePaths: string[]): Promise<void> {
+  const drop = new Set(worktreePaths);
+  const entries = await readManifest(cacheRoot);
+  for (const e of entries.filter((x) => drop.has(x.worktreePath))) {
+    await removeWorktree({ repoPath: e.repoPath, worktreePath: e.worktreePath, headSha: e.headSha });
+  }
+  await writeManifest(
+    cacheRoot,
+    entries.filter((e) => !drop.has(e.worktreePath))
+  );
+}
+
 /** Best-effort removal of a worktree created by ensureWorktree. */
 export async function removeWorktree(wt: Worktree): Promise<void> {
   try {
@@ -147,7 +269,8 @@ async function hasCommit(repoPath: string, sha: string): Promise<boolean> {
   }
 }
 
-async function repoRoot(folder: string): Promise<string | undefined> {
+/** Absolute toplevel of the git repo containing `folder`, or undefined. */
+export async function repoRoot(folder: string): Promise<string | undefined> {
   try {
     return await git(folder, ['rev-parse', '--show-toplevel']);
   } catch {

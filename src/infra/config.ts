@@ -31,3 +31,20 @@ export function getLocalWorktreeLimit(): number {
   const n = vscode.workspace.getConfiguration('reviewlens').get<number>('localWorktreeLimit', 5);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 5;
 }
+
+/**
+ * Use a blobless partial clone (--filter=blob:none) when auto-cloning for local
+ * review. Keeps large repos light: file contents are fetched on demand. Disable
+ * for fully-offline grep over the whole repo at the cost of a heavier clone.
+ */
+export function getLocalClonePartial(): boolean {
+  return vscode.workspace.getConfiguration('reviewlens').get<boolean>('localClonePartial', true);
+}
+
+/**
+ * Automatically find the active PR for the open workspace branch and show its
+ * comments inline on the working-tree files. Disable to attach only on demand.
+ */
+export function getAutoAttachBranchPr(): boolean {
+  return vscode.workspace.getConfiguration('reviewlens').get<boolean>('autoAttachBranchPr', true);
+}

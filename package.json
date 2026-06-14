@@ -88,6 +88,11 @@
         "icon": "$(search)"
       },
       {
+        "command": "reviewlens.attachToBranchPr",
+        "title": "ReviewLens: Show PR comments for current branch",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "reviewlens.reviewLocally",
         "title": "ReviewLens: Review locally (checkout PR)",
         "icon": "$(repo-clone)"
@@ -96,6 +101,20 @@
         "command": "reviewlens.stopLocalReview",
         "title": "ReviewLens: Stop local review",
         "icon": "$(repo)"
+      },
+      {
+        "command": "reviewlens.openInBrowser",
+        "title": "ReviewLens: Open pull request in browser",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "reviewlens.cleanWorktrees",
+        "title": "ReviewLens: Clean up local-review worktrees…",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "reviewlens.toggleViewedCurrent",
+        "title": "ReviewLens: Toggle viewed (current file)"
       },
       {
         "command": "reviewlens.nextFile",
@@ -127,6 +146,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "reviewlens.attachToBranchPr",
+          "when": "view == reviewlens.prList",
+          "group": "navigation@0"
+        },
+        {
           "command": "reviewlens.refreshPrs",
           "when": "view == reviewlens.prList",
           "group": "navigation@2"
@@ -150,6 +174,11 @@
           "command": "reviewlens.stopLocalReview",
           "when": "view == reviewlens.changedFiles && reviewlens.localActive",
           "group": "navigation@1"
+        },
+        {
+          "command": "reviewlens.cleanWorktrees",
+          "when": "view == reviewlens.changedFiles",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -157,6 +186,16 @@
           "command": "reviewlens.toggleViewed",
           "when": "view == reviewlens.changedFiles && viewItem == changedFile",
           "group": "inline"
+        },
+        {
+          "command": "reviewlens.openInBrowser",
+          "when": "view == reviewlens.prList && viewItem == pullRequest",
+          "group": "inline"
+        },
+        {
+          "command": "reviewlens.openInBrowser",
+          "when": "view == reviewlens.prList && viewItem == pullRequest",
+          "group": "navigation"
         }
       ],
       "comments/commentThread/context": [
@@ -202,10 +241,34 @@
         "when": "reviewlens.headEditor && editorTextFocus"
       },
       {
-        "command": "reviewlens.createOrReply",
-        "key": "ctrl+enter",
-        "mac": "cmd+enter",
-        "when": "commentEditorFocused"
+        "command": "reviewlens.castVote",
+        "key": "ctrl+k v",
+        "mac": "cmd+k v",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.toggleViewedCurrent",
+        "key": "ctrl+k enter",
+        "mac": "cmd+k enter",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.openInBrowser",
+        "key": "ctrl+k b",
+        "mac": "cmd+k b",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.reviewLocally",
+        "key": "ctrl+k l",
+        "mac": "cmd+k l",
+        "when": "reviewlens.reviewActive && !reviewlens.localActive"
+      },
+      {
+        "command": "reviewlens.stopLocalReview",
+        "key": "ctrl+k l",
+        "mac": "cmd+k l",
+        "when": "reviewlens.reviewActive && reviewlens.localActive"
       }
     ],
     "configuration": {
@@ -234,13 +297,23 @@
         "reviewlens.localRepoPath": {
           "type": "string",
           "default": "",
-          "description": "Optional: absolute path to a local clone of the repository, used for local (worktree) review. Empty = auto-detect from open workspace folders by matching the repo's remote URL."
+          "description": "Optional: absolute path to a local clone, used for local (worktree) review only when its origin matches the PR's repo. Local review otherwise reuses a matching open folder, or auto-clones the repo on demand."
+        },
+        "reviewlens.localClonePartial": {
+          "type": "boolean",
+          "default": true,
+          "description": "When auto-cloning for local review, use a blobless partial clone (--filter=blob:none): file contents are fetched on demand, so large repos clone quickly. Disable for a full clone (heavier, but whole-repo grep is fully offline)."
         },
         "reviewlens.localWorktreeLimit": {
           "type": "number",
           "default": 5,
           "minimum": 0,
           "description": "How many cached local-review worktrees to keep before the least-recently-used ones are pruned from the extension's storage."
+        },
+        "reviewlens.autoAttachBranchPr": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically find the active pull request for the open workspace branch and show its review comments inline on the working-tree files. Disable to attach only via the \"Show PR comments for current branch\" command."
         }
       }
     }

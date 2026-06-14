@@ -62,7 +62,31 @@ export class AdoClient {
       ? await git.getPullRequests(this.config.repository, criteria, this.config.project)
       : await git.getPullRequestsByProject(this.config.project, criteria);
 
-    return (prs ?? []).map((pr) => ({
+    return (prs ?? []).map((pr) => this.toSummary(pr));
+  }
+
+  /**
+   * Find the active PR whose source branch matches the open workspace branch, so
+   * its comments can be shown inline on the working-tree files. Returns the most
+   * recently created match when more than one PR targets the same source branch.
+   */
+  async findActivePrBySourceBranch(branch: string): Promise<PullRequestSummary | undefined> {
+    const git = await this.git();
+    const criteria: GitPullRequestSearchCriteria = {
+      status: PullRequestStatus.Active,
+      sourceRefName: `refs/heads/${branch}`,
+    };
+    const prs = this.config.repository
+      ? await git.getPullRequests(this.config.repository, criteria, this.config.project)
+      : await git.getPullRequestsByProject(this.config.project, criteria);
+    if (!prs || prs.length === 0) {
+      return undefined;
+    }
+    return this.toSummary(prs[0]);
+  }
+
+  private toSummary(pr: GitPullRequest): PullRequestSummary {
+    return {
       id: pr.pullRequestId ?? 0,
       title: pr.title ?? '(no title)',
       author: pr.createdBy?.displayName ?? 'unknown',
@@ -73,7 +97,7 @@ export class AdoClient {
       sourceBranch: shortBranch(pr.sourceRefName),
       targetBranch: shortBranch(pr.targetRefName),
       url: webUrl(this.config, pr.repository?.name, pr.pullRequestId),
-    }));
+    };
   }
 
   /** Changed files + base/head commits for the latest PR iteration (M1a). */

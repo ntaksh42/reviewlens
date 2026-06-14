@@ -18,6 +18,11 @@ export class NavigationCursor {
     this.index = this.files.findIndex((f) => f.path === file.path);
   }
 
+  /** The file the cursor currently points at, if any. */
+  current(): ChangedFile | undefined {
+    return this.index >= 0 ? this.files[this.index] : undefined;
+  }
+
   next(): ChangedFile | undefined {
     if (this.files.length === 0) {
       return undefined;
