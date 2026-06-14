@@ -9,6 +9,8 @@ interface ActiveReview {
   client: AdoClient;
   data: ReviewData;
   threads: Thread[];
+  /** File text keyed by `${commit}:${path}`. Content at a commit is immutable. */
+  contentCache: Map<string, Promise<string>>;
 }
 
 /** Holds the PR currently under review and serves its files + comment threads. */
@@ -23,9 +25,13 @@ export class ReviewService {
 
   async open(pr: PullRequestSummary): Promise<ReviewData> {
     const client = await createAdoClient(this.auth);
-    const data = await client.getReview(pr.id, pr.repositoryId);
-    const threads = await client.getThreads(pr.id, pr.repositoryId);
-    this.active = { pr, client, data, threads };
+    // The review (files + commits) and the comment threads are independent
+    // fetches; run them concurrently instead of one after the other.
+    const [data, threads] = await Promise.all([
+      client.getReview(pr.id, pr.repositoryId),
+      client.getThreads(pr.id, pr.repositoryId),
+    ]);
+    this.active = { pr, client, data, threads, contentCache: new Map() };
     return data;
   }
 
@@ -33,12 +39,20 @@ export class ReviewService {
     if (!this.active) {
       return '';
     }
-    const { client, data } = this.active;
+    const { client, data, contentCache } = this.active;
     const commit = side === 'left' ? data.baseCommit : data.headCommit;
     if (!commit) {
       return '';
     }
-    return client.getFileContent(data.repositoryId, file.path, commit);
+    // Cache the in-flight promise so repeated opens of a file (next/prev
+    // navigation, switching back) reuse one fetch instead of round-tripping.
+    const key = `${commit}:${file.path}`;
+    let pending = contentCache.get(key);
+    if (!pending) {
+      pending = client.getFileContent(data.repositoryId, file.path, commit);
+      contentCache.set(key, pending);
+    }
+    return pending;
   }
 
   threadsForFile(path: string): Thread[] {

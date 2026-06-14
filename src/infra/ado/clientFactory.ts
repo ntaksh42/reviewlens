@@ -1,7 +1,16 @@
 import { AdoClient } from './adoClient';
 import { AuthProvider } from './authProvider';
-import { getAdoConfig, isConfigured } from '../config';
+import { AdoConfig, getAdoConfig, isConfigured } from '../config';
 import { NotConfiguredError, NotSignedInError } from '../../domain/errors';
+
+/**
+ * One cached client, reused while the config + PAT are unchanged. Each AdoClient
+ * holds a WebApi connection whose first request does a resource-area lookup
+ * round trip; rebuilding the client per action (list, open, every comment op)
+ * pays that latency every time. Keying the cache on the inputs means a config or
+ * token change transparently yields a fresh client.
+ */
+let cached: { key: string; client: AdoClient } | undefined;
 
 /** Builds an AdoClient from current settings + stored PAT, or throws a typed error. */
 export async function createAdoClient(auth: AuthProvider): Promise<AdoClient> {
@@ -13,5 +22,13 @@ export async function createAdoClient(auth: AuthProvider): Promise<AdoClient> {
   if (!pat) {
     throw new NotSignedInError('Run "ReviewLens: Sign in (PAT)" to add a token.');
   }
-  return new AdoClient(config, pat);
+  const key = cacheKey(config, pat);
+  if (cached?.key !== key) {
+    cached = { key, client: new AdoClient(config, pat) };
+  }
+  return cached.client;
+}
+
+function cacheKey(config: AdoConfig, pat: string): string {
+  return JSON.stringify([config.orgUrl, config.project, config.repository, pat]);
 }

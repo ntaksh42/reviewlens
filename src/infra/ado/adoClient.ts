@@ -1,4 +1,5 @@
 import * as azdev from 'azure-devops-node-api';
+import { IGitApi } from 'azure-devops-node-api/GitApi';
 import {
   CommentThreadStatus,
   CommentType,
@@ -26,14 +27,32 @@ export interface CommentTarget {
  */
 export class AdoClient {
   private readonly connection: azdev.WebApi;
+  /**
+   * Cached GitApi promise. The first getGitApi() on a connection does a
+   * resource-area lookup round trip; memoizing it means every subsequent call
+   * reuses that result instead of paying the round trip again.
+   */
+  private gitApi: Promise<IGitApi> | undefined;
 
   constructor(private readonly config: AdoConfig, pat: string) {
     const handler = azdev.getPersonalAccessTokenHandler(pat);
     this.connection = new azdev.WebApi(config.orgUrl, handler);
   }
 
+  private git(): Promise<IGitApi> {
+    if (!this.gitApi) {
+      // Drop the memo if the lookup fails so a later call can retry instead of
+      // replaying a poisoned rejected promise.
+      this.gitApi = this.connection.getGitApi().catch((err) => {
+        this.gitApi = undefined;
+        throw err;
+      });
+    }
+    return this.gitApi;
+  }
+
   async listActivePullRequests(): Promise<PullRequestSummary[]> {
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     const criteria: GitPullRequestSearchCriteria = {
       status: PullRequestStatus.Active,
     };
@@ -57,7 +76,7 @@ export class AdoClient {
 
   /** Changed files + base/head commits for the latest PR iteration (M1a). */
   async getReview(prId: number, repositoryId: string): Promise<ReviewData> {
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     const iterations = await git.getPullRequestIterations(
       repositoryId,
       prId,
@@ -93,7 +112,7 @@ export class AdoClient {
     if (!commitId) {
       return '';
     }
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     try {
       const item = await git.getItem(
         repositoryId,
@@ -114,7 +133,7 @@ export class AdoClient {
   }
 
   async getThreads(prId: number, repositoryId: string): Promise<Thread[]> {
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     const threads = await git.getThreads(repositoryId, prId, this.config.project);
     return (threads ?? []).filter((t) => !t.isDeleted).map(mapThread);
   }
@@ -127,7 +146,7 @@ export class AdoClient {
     target: CommentTarget,
     content: string
   ): Promise<void> {
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     const thread: GitPullRequestCommentThread = {
       status: CommentThreadStatus.Active,
       comments: [{ parentCommentId: 0, content, commentType: CommentType.Text }],
@@ -146,7 +165,7 @@ export class AdoClient {
     threadId: number,
     content: string
   ): Promise<void> {
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     await git.createComment(
       { parentCommentId: 0, content, commentType: CommentType.Text },
       repositoryId,
@@ -162,7 +181,7 @@ export class AdoClient {
     threadId: number,
     status: ThreadStatus
   ): Promise<void> {
-    const git = await this.connection.getGitApi();
+    const git = await this.git();
     await git.updateThread(
       { status: toAdoStatus(status) },
       repositoryId,
