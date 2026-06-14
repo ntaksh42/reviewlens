@@ -52,19 +52,6 @@ export class AdoClient {
     return this.gitApi;
   }
 
-  async listActivePullRequests(): Promise<PullRequestSummary[]> {
-    const git = await this.git();
-    const criteria: GitPullRequestSearchCriteria = {
-      status: PullRequestStatus.Active,
-    };
-
-    const prs = this.config.repository
-      ? await git.getPullRequests(this.config.repository, criteria, this.config.project)
-      : await git.getPullRequestsByProject(this.config.project, criteria);
-
-    return (prs ?? []).map((pr) => this.toSummary(pr));
-  }
-
   /**
    * Find the active PR whose source branch matches the open workspace branch, so
    * its comments can be shown inline on the working-tree files. Returns the most

@@ -29,6 +29,9 @@ export class CommentsController {
     private readonly anchors: AnchorStore
   ) {
     this.controller = vscode.comments.createCommentController('reviewlens', 'ReviewLens');
+    this.controller.options = {
+      placeHolder: 'Reply...',
+    };
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: (document) => {
         if (!this.headPath(document.uri)) {
@@ -95,7 +98,6 @@ export class CommentsController {
         t.comments.map(toComment)
       ) as TrackedThread;
       vsThread.label = `ReviewLens · ${t.status}${driftLabel(drift)}`;
-      vsThread.canReply = true;
       vsThread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
       vsThread.contextValue = t.status === 'closed' ? 'resolved' : 'open';
       vsThread.adoThreadId = threadId;

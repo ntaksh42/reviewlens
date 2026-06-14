@@ -26,16 +26,8 @@
     "views": {
       "reviewlens": [
         {
-          "id": "reviewlens.prList",
-          "name": "Pull Requests"
-        },
-        {
           "id": "reviewlens.changedFiles",
           "name": "Changed Files"
-        },
-        {
-          "id": "reviewlens.impact",
-          "name": "Impact"
         }
       ]
     },
@@ -49,28 +41,13 @@
         "title": "ReviewLens: Sign out"
       },
       {
-        "command": "reviewlens.refreshPrs",
-        "title": "ReviewLens: Refresh Pull Requests",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "reviewlens.filterPrs",
-        "title": "ReviewLens: Filter Pull Requests",
-        "icon": "$(filter)"
-      },
-      {
-        "command": "reviewlens.clearFilter",
-        "title": "ReviewLens: Clear Pull Request Filter",
-        "icon": "$(filter-filled)"
-      },
-      {
         "command": "reviewlens.toggleViewed",
         "title": "ReviewLens: Toggle viewed",
         "icon": "$(check)"
       },
       {
         "command": "reviewlens.createOrReply",
-        "title": "ReviewLens: Comment"
+        "title": "Reply"
       },
       {
         "command": "reviewlens.addComment",
@@ -87,34 +64,14 @@
         "icon": "$(thumbsup)"
       },
       {
-        "command": "reviewlens.analyzeImpact",
-        "title": "ReviewLens: Analyze Impact",
-        "icon": "$(search)"
-      },
-      {
         "command": "reviewlens.attachToBranchPr",
         "title": "ReviewLens: Show PR comments for current branch",
         "icon": "$(comment-discussion)"
       },
       {
-        "command": "reviewlens.reviewLocally",
-        "title": "ReviewLens: Review locally (checkout PR)",
-        "icon": "$(repo-clone)"
-      },
-      {
-        "command": "reviewlens.stopLocalReview",
-        "title": "ReviewLens: Stop local review",
-        "icon": "$(repo)"
-      },
-      {
         "command": "reviewlens.openInBrowser",
         "title": "ReviewLens: Open pull request in browser",
         "icon": "$(globe)"
-      },
-      {
-        "command": "reviewlens.cleanWorktrees",
-        "title": "ReviewLens: Clean up local-review worktrees…",
-        "icon": "$(trash)"
       },
       {
         "command": "reviewlens.toggleViewedCurrent",
@@ -140,49 +97,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "reviewlens.filterPrs",
-          "when": "view == reviewlens.prList && !reviewlens.prFilterActive",
-          "group": "navigation@1"
-        },
-        {
-          "command": "reviewlens.clearFilter",
-          "when": "view == reviewlens.prList && reviewlens.prFilterActive",
-          "group": "navigation@1"
-        },
-        {
           "command": "reviewlens.attachToBranchPr",
-          "when": "view == reviewlens.prList",
+          "when": "view == reviewlens.changedFiles",
           "group": "navigation@0"
-        },
-        {
-          "command": "reviewlens.refreshPrs",
-          "when": "view == reviewlens.prList",
-          "group": "navigation@2"
-        },
-        {
-          "command": "reviewlens.analyzeImpact",
-          "when": "view == reviewlens.impact",
-          "group": "navigation"
         },
         {
           "command": "reviewlens.castVote",
           "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
-          "group": "navigation@0"
-        },
-        {
-          "command": "reviewlens.reviewLocally",
-          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive && !reviewlens.localActive",
           "group": "navigation@1"
-        },
-        {
-          "command": "reviewlens.stopLocalReview",
-          "when": "view == reviewlens.changedFiles && reviewlens.localActive",
-          "group": "navigation@1"
-        },
-        {
-          "command": "reviewlens.cleanWorktrees",
-          "when": "view == reviewlens.changedFiles",
-          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -190,22 +112,17 @@
           "command": "reviewlens.toggleViewed",
           "when": "view == reviewlens.changedFiles && viewItem == changedFile",
           "group": "inline"
-        },
+        }
+      ],
+      "commandPalette": [
         {
-          "command": "reviewlens.openInBrowser",
-          "when": "view == reviewlens.prList && viewItem == pullRequest",
-          "group": "inline"
-        },
-        {
-          "command": "reviewlens.openInBrowser",
-          "when": "view == reviewlens.prList && viewItem == pullRequest",
-          "group": "navigation"
+          "command": "reviewlens.createOrReply",
+          "when": "false"
         }
       ],
       "comments/commentThread/context": [
         {
           "command": "reviewlens.createOrReply",
-          "group": "inline",
           "when": "commentController == reviewlens"
         }
       ],
@@ -230,12 +147,12 @@
       },
       {
         "command": "reviewlens.nextChange",
-        "key": "alt+down",
+        "key": "f8",
         "when": "reviewlens.reviewActive && textInputFocus"
       },
       {
         "command": "reviewlens.prevChange",
-        "key": "alt+up",
+        "key": "shift+f8",
         "when": "reviewlens.reviewActive && textInputFocus"
       },
       {
@@ -261,18 +178,6 @@
         "key": "ctrl+k b",
         "mac": "cmd+k b",
         "when": "reviewlens.reviewActive"
-      },
-      {
-        "command": "reviewlens.reviewLocally",
-        "key": "ctrl+k l",
-        "mac": "cmd+k l",
-        "when": "reviewlens.reviewActive && !reviewlens.localActive"
-      },
-      {
-        "command": "reviewlens.stopLocalReview",
-        "key": "ctrl+k l",
-        "mac": "cmd+k l",
-        "when": "reviewlens.reviewActive && reviewlens.localActive"
       }
     ],
     "configuration": {
@@ -291,28 +196,7 @@
         "reviewlens.repository": {
           "type": "string",
           "default": "",
-          "description": "Optional: repository name to filter PRs. Empty = all repos in the project."
-        },
-        "reviewlens.baseRef": {
-          "type": "string",
-          "default": "main",
-          "description": "Base ref for impact analysis on the open repository (git diff <baseRef>...HEAD)."
-        },
-        "reviewlens.localRepoPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional: absolute path to a local clone, used for local (worktree) review only when its origin matches the PR's repo. Local review otherwise reuses a matching open folder, or auto-clones the repo on demand."
-        },
-        "reviewlens.localClonePartial": {
-          "type": "boolean",
-          "default": true,
-          "description": "When auto-cloning for local review, use a blobless partial clone (--filter=blob:none): file contents are fetched on demand, so large repos clone quickly. Disable for a full clone (heavier, but whole-repo grep is fully offline)."
-        },
-        "reviewlens.localWorktreeLimit": {
-          "type": "number",
-          "default": 5,
-          "minimum": 0,
-          "description": "How many cached local-review worktrees to keep before the least-recently-used ones are pruned from the extension's storage."
+          "description": "Optional: repository name to match the active pull request. Empty = all repos in the project."
         },
         "reviewlens.autoAttachBranchPr": {
           "type": "boolean",

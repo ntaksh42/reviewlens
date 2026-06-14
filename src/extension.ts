@@ -1,92 +1,36 @@
 import * as vscode from 'vscode';
 import { AuthProvider } from './infra/ado/authProvider';
-import { PullRequestService } from './app/pullRequestService';
 import { ReviewService } from './app/reviewService';
-import { PrListTreeProvider } from './ui/prListTreeProvider';
 import { ChangedFilesTreeProvider } from './ui/changedFilesTreeProvider';
 import { DiffContentProvider, DIFF_SCHEME, sideUri, headUri } from './ui/diffContentProvider';
 import { CommentsController } from './ui/commentsController';
-import { ImpactTreeProvider } from './ui/impactTreeProvider';
 import { NavigationCursor } from './ui/navigationCursor';
 import { ViewedStore } from './infra/state/viewedStore';
 import { AnchorStore } from './infra/state/anchorStore';
-import { analyzeImpact } from './infra/lsp/impactAnalyzer';
-import {
-  resolveLocalRepo,
-  ensureLocalClone,
-  ensureWorktree,
-  pruneWorktrees,
-  listWorktrees,
-  removeWorktrees,
-  getCurrentBranch,
-  Worktree,
-} from './infra/git/worktree';
-import {
-  getLocalRepoPath,
-  getLocalWorktreeLimit,
-  getLocalClonePartial,
-  getAutoAttachBranchPr,
-} from './infra/config';
+import { getCurrentBranch, repoRoot } from './infra/git/repo';
+import { getAutoAttachBranchPr } from './infra/config';
 import { ChangedFile, PullRequestSummary } from './domain/models';
 import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
-import * as path from 'path';
 
 export function activate(context: vscode.ExtensionContext): void {
   const log = createLogger();
   const auth = new AuthProvider(context.secrets);
-  const prService = new PullRequestService(auth);
   const reviewService = new ReviewService(auth);
   const viewedStore = new ViewedStore(context.workspaceState);
   const anchorStore = new AnchorStore(context.workspaceState);
 
-  const prList = new PrListTreeProvider(prService);
   const changedFiles = new ChangedFilesTreeProvider();
   const diffProvider = new DiffContentProvider();
   const comments = new CommentsController(reviewService, anchorStore);
-  const impact = new ImpactTreeProvider();
   const cursor = new NavigationCursor();
   const changedFilesView = vscode.window.createTreeView('reviewlens.changedFiles', {
     treeDataProvider: changedFiles,
   });
 
-  // Local (worktree) review state. Undefined unless the user opted in for the
-  // currently open PR.
-  let activeWorktree: Worktree | undefined;
-
-  const cacheRoot = (): string =>
-    path.join(context.globalStorageUri.fsPath, 'worktrees');
-  const cloneStoreRoot = (): string =>
-    path.join(context.globalStorageUri.fsPath, 'clones');
-
-  /** Suffix the changed-files view title with the local-review indicator. */
-  const LOCAL_BADGE = ' · local';
-  function showLocalBadge(on: boolean): void {
-    const base = (changedFilesView.description ?? '').replace(LOCAL_BADGE, '');
-    changedFilesView.description = on ? `${base}${LOCAL_BADGE}` : base || undefined;
-  }
-
-  function teardownLocal(): void {
-    const wt = activeWorktree;
-    activeWorktree = undefined;
-    reviewService.setLocalPath(undefined);
-    void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', false);
-    showLocalBadge(false);
-    if (!wt) {
-      return;
-    }
-    // Drop the worktree folder from the workspace (never index 0, so no reload).
-    // The worktree itself is left on disk for reuse; pruneWorktrees bounds growth.
-    const folders = vscode.workspace.workspaceFolders ?? [];
-    const idx = folders.findIndex((f) => f.uri.fsPath === wt.worktreePath);
-    if (idx > 0) {
-      vscode.workspace.updateWorkspaceFolders(idx, 1);
-    }
-  }
-
-  /** Tear down all review UI — used after a PR leaves the active list. */
+  /** Tear down all review UI — used when the open PR is completed/abandoned. */
   function closeReview(): void {
-    teardownLocal();
+    reviewService.setLocalPath(undefined);
     attachedBranchKey = undefined;
     diffProvider.clear();
     comments.clearAll();
@@ -111,9 +55,13 @@ export function activate(context: vscode.ExtensionContext): void {
   > {
     const folders = vscode.workspace.workspaceFolders ?? [];
     for (const f of folders) {
-      const branch = await getCurrentBranch(f.uri.fsPath);
-      if (branch) {
-        return { repoRoot: f.uri.fsPath, branch };
+      // Resolve the git toplevel, not the workspace folder, so it matches the
+      // repo-relative paths of changed files even when a subfolder is open;
+      // otherwise the head file can't be found on disk and comments don't anchor.
+      const root = await repoRoot(f.uri.fsPath);
+      const branch = root ? await getCurrentBranch(root) : undefined;
+      if (root && branch) {
+        return { repoRoot: root, branch };
       }
     }
     return undefined;
@@ -135,7 +83,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const key = `${open.repoRoot}#${open.branch}`;
     let pr: PullRequestSummary | undefined;
     try {
-      pr = await prService.findByBranch(open.branch);
+      pr = await reviewService.findByBranch(open.branch);
     } catch (e) {
       if (!silent) {
         vscode.window.showErrorMessage(
@@ -153,7 +101,6 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     try {
-      teardownLocal();
       diffProvider.clear();
       comments.clearAll();
       const data = await vscode.window.withProgress(
@@ -164,11 +111,10 @@ export function activate(context: vscode.ExtensionContext): void {
       // render on the real files and commenting targets them.
       reviewService.setLocalPath(open.repoRoot);
       changedFiles.setFiles(data.files, viewedStore.get(pr.id));
-      changedFilesView.description = `#${pr.id} ${pr.title}${LOCAL_BADGE}`;
+      changedFilesView.description = `#${pr.id} ${pr.title}`;
       cursor.setFiles(data.files);
       attachedBranchKey = key;
       void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
-      void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', true);
       // Render comments on the file already open, if it's one of the PR's files.
       await renderActiveEditor();
       if (!silent) {
@@ -269,67 +215,20 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     changedFilesView,
     comments,
-    vscode.window.registerTreeDataProvider('reviewlens.prList', prList),
-    vscode.window.registerTreeDataProvider('reviewlens.impact', impact),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider),
-
-    vscode.commands.registerCommand('reviewlens.refreshPrs', () => prList.refresh()),
-
-    vscode.commands.registerCommand('reviewlens.filterPrs', async () => {
-      const value = await vscode.window.showInputBox({
-        prompt: 'Filter pull requests (title, author, repository, project, branch)',
-        placeHolder: 'e.g. bugfix, alice, my-repo',
-        value: prList.filterText,
-      });
-      if (value !== undefined) {
-        prList.setFilter(value);
-      }
-    }),
-
-    vscode.commands.registerCommand('reviewlens.clearFilter', () => prList.setFilter('')),
 
     vscode.commands.registerCommand('reviewlens.signIn', async () => {
       const pat = await auth.promptAndStore();
       if (pat) {
         vscode.window.showInformationMessage('ReviewLens: PAT saved.');
-        await prList.refresh();
+        await maybeAutoAttach();
       }
     }),
 
     vscode.commands.registerCommand('reviewlens.signOut', async () => {
-      teardownLocal();
-      // Signing out drops local access, so purge the cached worktrees too.
-      try {
-        const cached = await listWorktrees(cacheRoot());
-        await removeWorktrees(cacheRoot(), cached.map((w) => w.worktreePath));
-      } catch {
-        // best-effort cleanup; don't block sign-out
-      }
+      closeReview();
       await auth.clear();
       vscode.window.showInformationMessage('ReviewLens: signed out.');
-      await prList.refresh();
-    }),
-
-    vscode.commands.registerCommand('reviewlens.openPr', async (pr: PullRequestSummary) => {
-      try {
-        teardownLocal();
-        attachedBranchKey = undefined;
-        diffProvider.clear();
-        comments.clearAll();
-        const data = await vscode.window.withProgress(
-          { location: { viewId: 'reviewlens.changedFiles' } },
-          () => reviewService.open(pr)
-        );
-        changedFiles.setFiles(data.files, viewedStore.get(pr.id));
-        changedFilesView.description = `#${pr.id} ${pr.title}`;
-        cursor.setFiles(data.files);
-        void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
-      } catch (e) {
-        changedFiles.setFiles([], new Set());
-        vscode.window.showErrorMessage(
-          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
     }),
 
     vscode.commands.registerCommand(
@@ -355,141 +254,15 @@ export function activate(context: vscode.ExtensionContext): void {
       changedFiles.setViewed(file.path, nowViewed);
     }),
 
-    vscode.commands.registerCommand('reviewlens.reviewLocally', async () => {
-      const current = reviewService.current;
-      if (!current) {
-        vscode.window.showWarningMessage('ReviewLens: open a pull request first.');
+    // Open the active PR in the browser. A keybinding passes nothing, so use
+    // the PR currently attached to the open branch.
+    vscode.commands.registerCommand('reviewlens.openInBrowser', async () => {
+      const target = reviewService.current?.pr;
+      if (!target?.url) {
+        vscode.window.showWarningMessage('ReviewLens: no pull request to open.');
         return;
       }
-      const headSha = current.data.headCommit;
-      if (!headSha) {
-        vscode.window.showErrorMessage('ReviewLens: the PR head commit is unknown.');
-        return;
-      }
-      const folders = vscode.workspace.workspaceFolders ?? [];
-      if (folders.length === 0) {
-        vscode.window.showWarningMessage(
-          'ReviewLens: open a folder or workspace before starting local review.'
-        );
-        return;
-      }
-      try {
-        await vscode.window.withProgress(
-          { location: { viewId: 'reviewlens.changedFiles' }, title: 'Checking out PR locally…' },
-          async () => {
-            const candidates = folders.map((f) => f.uri.fsPath);
-            let repo = await resolveLocalRepo(
-              current.pr.remoteUrl,
-              candidates,
-              getLocalRepoPath()
-            );
-            if (!repo) {
-              // No existing clone matched: auto-clone (blobless by default) into
-              // the extension's clone cache using the PAT.
-              const pat = await auth.getPat();
-              if (!pat) {
-                throw new Error('sign in with a PAT first.');
-              }
-              if (!current.pr.remoteUrl) {
-                throw new Error('the PR has no remote URL to clone.');
-              }
-              repo = await ensureLocalClone(current.pr.remoteUrl, cloneStoreRoot(), {
-                pat,
-                blobless: getLocalClonePartial(),
-              });
-            }
-            const wt = await ensureWorktree(repo, headSha, cacheRoot());
-            activeWorktree = wt;
-            reviewService.setLocalPath(wt.worktreePath);
-            // Bound the cache: drop the least-recently-used worktrees, keeping
-            // the one we just materialized.
-            await pruneWorktrees(cacheRoot(), getLocalWorktreeLimit(), [wt.worktreePath]);
-            // Append the worktree as a workspace folder so the language server
-            // indexes the PR's head version (cross-file nav, references, grep).
-            const existing = (vscode.workspace.workspaceFolders ?? []).some(
-              (f) => f.uri.fsPath === wt.worktreePath
-            );
-            if (!existing) {
-              vscode.workspace.updateWorkspaceFolders(
-                vscode.workspace.workspaceFolders?.length ?? 0,
-                0,
-                { uri: vscode.Uri.file(wt.worktreePath), name: `PR #${current.pr.id} (head)` }
-              );
-            }
-          }
-        );
-        void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', true);
-        showLocalBadge(true);
-        vscode.window.showInformationMessage(
-          'ReviewLens: local review on. Reopen a file to navigate its neighbors.'
-        );
-      } catch (e) {
-        teardownLocal();
-        vscode.window.showErrorMessage(
-          `ReviewLens: local review failed — ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
-    }),
-
-    vscode.commands.registerCommand('reviewlens.stopLocalReview', async () => {
-      teardownLocal();
-      vscode.window.showInformationMessage('ReviewLens: local review off.');
-    }),
-
-    // Open a PR in the browser. The list passes a tree node ({ pr }); a
-    // keybinding passes nothing, so fall back to the currently open PR.
-    vscode.commands.registerCommand(
-      'reviewlens.openInBrowser',
-      async (arg?: PullRequestSummary | { pr: PullRequestSummary }) => {
-        const fromArg = arg && 'pr' in arg ? arg.pr : (arg as PullRequestSummary | undefined);
-        const target = fromArg ?? reviewService.current?.pr;
-        if (!target?.url) {
-          vscode.window.showWarningMessage('ReviewLens: no pull request to open.');
-          return;
-        }
-        await vscode.env.openExternal(vscode.Uri.parse(target.url));
-      }
-    ),
-
-    // Manage the local-review worktree cache: pick cached worktrees to delete.
-    vscode.commands.registerCommand('reviewlens.cleanWorktrees', async () => {
-      const cached = await listWorktrees(cacheRoot());
-      if (cached.length === 0) {
-        vscode.window.showInformationMessage('ReviewLens: no cached worktrees.');
-        return;
-      }
-      interface WtItem extends vscode.QuickPickItem {
-        worktreePath: string;
-      }
-      const items: WtItem[] = cached.map((w) => ({
-        label: path.basename(w.worktreePath),
-        description: w.headSha.slice(0, 12),
-        detail: w.worktreePath,
-        worktreePath: w.worktreePath,
-      }));
-      const picked = await vscode.window.showQuickPick(items, {
-        canPickMany: true,
-        title: 'ReviewLens — delete cached worktrees',
-        placeHolder: 'Select worktrees to remove from disk',
-      });
-      if (!picked || picked.length === 0) {
-        return;
-      }
-      const paths = picked.map((p) => p.worktreePath);
-      // If we're deleting the active one, tear local review down first.
-      if (activeWorktree && paths.includes(activeWorktree.worktreePath)) {
-        teardownLocal();
-      }
-      try {
-        await removeWorktrees(cacheRoot(), paths);
-        vscode.window.showInformationMessage(
-          `ReviewLens: removed ${paths.length} worktree(s).`
-        );
-      } catch (e) {
-        vscode.window.showErrorMessage(
-          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
+      await vscode.env.openExternal(vscode.Uri.parse(target.url));
     }),
 
     vscode.commands.registerCommand('reviewlens.openFileDiff', async (file: ChangedFile) => {
@@ -614,51 +387,12 @@ export function activate(context: vscode.ExtensionContext): void {
           }.`
         );
         closeReview();
-        await prList.refresh();
       } catch (e) {
         vscode.window.showErrorMessage(
           `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }),
-
-    vscode.commands.registerCommand('reviewlens.analyzeImpact', async () => {
-      // When local review is on, analyze the PR's head worktree against its real
-      // base commit; otherwise fall back to the open folder + configured baseRef.
-      const local = reviewService.localPath;
-      const baseSha = reviewService.current?.data.baseCommit;
-      const analysisRoot = local ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!analysisRoot) {
-        impact.setMessage('Open the repository folder to analyze impact.');
-        return;
-      }
-      const baseRef =
-        local && baseSha
-          ? baseSha
-          : vscode.workspace.getConfiguration('reviewlens').get<string>('baseRef', 'main');
-      await vscode.window.withProgress(
-        { location: { viewId: 'reviewlens.impact' } },
-        async () => {
-          try {
-            const roots = await analyzeImpact(analysisRoot, baseRef);
-            impact.setResults(roots);
-          } catch (e) {
-            impact.setMessage(`Impact analysis failed: ${e instanceof Error ? e.message : e}`);
-          }
-        }
-      );
-    }),
-
-    vscode.commands.registerCommand(
-      'reviewlens.openImpactLocation',
-      async (filePath: string, line: number) => {
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-        const editor = await vscode.window.showTextDocument(doc);
-        const pos = new vscode.Position(line, 0);
-        editor.selection = new vscode.Selection(pos, pos);
-        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-      }
-    ),
 
     vscode.commands.registerCommand('reviewlens.nextFile', () => {
       const file = cursor.next();
@@ -719,7 +453,6 @@ export function activate(context: vscode.ExtensionContext): void {
     'reviewlens.headEditor',
     active ? comments.isHeadDocument(active.document.uri) : false
   );
-  void prList.refresh();
   void maybeAutoAttach();
   log.info('ReviewLens activated.');
 }
