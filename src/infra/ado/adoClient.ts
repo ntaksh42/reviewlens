@@ -68,6 +68,7 @@ export class AdoClient {
       project: pr.repository?.project?.name ?? this.config.project,
       repository: pr.repository?.name ?? '',
       repositoryId: pr.repository?.id ?? '',
+      remoteUrl: pr.repository?.remoteUrl ?? '',
       sourceBranch: shortBranch(pr.sourceRefName),
       targetBranch: shortBranch(pr.targetRefName),
       url: webUrl(this.config, pr.repository?.name, pr.pullRequestId),

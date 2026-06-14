@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ReviewService } from '../app/reviewService';
 import { CommentTarget } from '../infra/ado/adoClient';
 import { Comment as DomainComment } from '../domain/models';
-import { DIFF_SCHEME, parseRightUri } from './diffContentProvider';
+import { headDocPath } from './diffContentProvider';
 
 interface TrackedThread extends vscode.CommentThread {
   adoThreadId?: number;
@@ -21,13 +21,29 @@ export class CommentsController {
     this.controller = vscode.comments.createCommentController('reviewlens', 'ReviewLens');
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: (document) => {
-        if (document.uri.scheme !== DIFF_SCHEME || !document.uri.path.startsWith('/right/')) {
+        if (!this.headPath(document.uri)) {
           return [];
         }
         const last = Math.max(0, document.lineCount - 1);
         return [new vscode.Range(0, 0, last, 0)];
       },
     };
+  }
+
+  /**
+   * Repo-relative path of a head-side document we accept comments on. In local
+   * review the head side is a real worktree file; restrict commenting to the PR's
+   * changed files so neighboring files opened for context don't get gutters.
+   */
+  private headPath(uri: vscode.Uri): string | undefined {
+    const filePath = headDocPath(uri, this.review.localPath);
+    if (!filePath) {
+      return undefined;
+    }
+    if (uri.scheme === 'file' && !this.review.isChangedFile(filePath)) {
+      return undefined;
+    }
+    return filePath;
   }
 
   dispose(): void {
@@ -76,7 +92,7 @@ export class CommentsController {
    */
   async addCommentAtCursor(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
-    if (!editor || !parseRightUri(editor.document.uri)) {
+    if (!editor || !this.headPath(editor.document.uri)) {
       return;
     }
     await vscode.commands.executeCommand('workbench.action.addComment');
@@ -87,18 +103,18 @@ export class CommentsController {
       return;
     }
     const thread = reply.thread as TrackedThread;
-    const info = parseRightUri(thread.uri);
-    if (!info) {
+    const filePath = this.headPath(thread.uri);
+    if (!filePath) {
       return;
     }
     try {
       if (thread.adoThreadId) {
         await this.review.reply(thread.adoThreadId, reply.text);
       } else {
-        await this.review.createComment(info.filePath, targetFromSelection(thread), reply.text);
+        await this.review.createComment(filePath, targetFromSelection(thread), reply.text);
         thread.dispose();
       }
-      this.renderForFile(info.filePath, thread.uri);
+      this.renderForFile(filePath, thread.uri);
     } catch (e) {
       vscode.window.showErrorMessage(
         `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
@@ -108,13 +124,13 @@ export class CommentsController {
 
   async resolve(thread: vscode.CommentThread): Promise<void> {
     const t = thread as TrackedThread;
-    const info = parseRightUri(thread.uri);
-    if (!info || !t.adoThreadId) {
+    const filePath = this.headPath(thread.uri);
+    if (!filePath || !t.adoThreadId) {
       return;
     }
     try {
       await this.review.resolve(t.adoThreadId);
-      this.renderForFile(info.filePath, thread.uri);
+      this.renderForFile(filePath, thread.uri);
     } catch (e) {
       vscode.window.showErrorMessage(
         `ReviewLens: ${e instanceof Error ? e.message : String(e)}`

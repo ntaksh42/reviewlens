@@ -19,3 +19,9 @@ export function getAdoConfig(): AdoConfig {
 export function isConfigured(config: AdoConfig): boolean {
   return Boolean(config.orgUrl && config.project);
 }
+
+/** Optional explicit path to a local clone, used for local (worktree) review. */
+export function getLocalRepoPath(): string | undefined {
+  const p = (vscode.workspace.getConfiguration('reviewlens').get<string>('localRepoPath') ?? '').trim();
+  return p || undefined;
+}

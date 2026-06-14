@@ -83,6 +83,16 @@
         "icon": "$(search)"
       },
       {
+        "command": "reviewlens.reviewLocally",
+        "title": "ReviewLens: Review locally (checkout PR)",
+        "icon": "$(repo-clone)"
+      },
+      {
+        "command": "reviewlens.stopLocalReview",
+        "title": "ReviewLens: Stop local review",
+        "icon": "$(repo)"
+      },
+      {
         "command": "reviewlens.nextFile",
         "title": "ReviewLens: Next changed file"
       },
@@ -120,6 +130,16 @@
           "command": "reviewlens.analyzeImpact",
           "when": "view == reviewlens.impact",
           "group": "navigation"
+        },
+        {
+          "command": "reviewlens.reviewLocally",
+          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive && !reviewlens.localActive",
+          "group": "navigation@1"
+        },
+        {
+          "command": "reviewlens.stopLocalReview",
+          "when": "view == reviewlens.changedFiles && reviewlens.localActive",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
@@ -200,6 +220,11 @@
           "type": "string",
           "default": "main",
           "description": "Base ref for impact analysis on the open repository (git diff <baseRef>...HEAD)."
+        },
+        "reviewlens.localRepoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: absolute path to a local clone of the repository, used for local (worktree) review. Empty = auto-detect from open workspace folders by matching the repo's remote URL."
         }
       }
     }

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { Side } from '../domain/types';
 
 export const DIFF_SCHEME = 'reviewlens';
@@ -33,6 +35,48 @@ export function sideUri(prId: number, side: Side, filePath: string): vscode.Uri 
     scheme: DIFF_SCHEME,
     path: `/${side}/${prId}/${filePath}`,
   });
+}
+
+/**
+ * Head-side document URI for a file: the real worktree file when local review is
+ * on and the file exists on disk, otherwise the virtual head document. Using the
+ * real file gives the head pane full code intelligence (definitions, references,
+ * grep) and lets neighboring files be opened from it.
+ */
+export function headUri(
+  prId: number,
+  filePath: string,
+  localPath: string | undefined
+): vscode.Uri {
+  if (localPath) {
+    const onDisk = path.join(localPath, filePath);
+    if (fileExistsSync(onDisk)) {
+      return vscode.Uri.file(onDisk);
+    }
+  }
+  return sideUri(prId, 'right', filePath);
+}
+
+/** Repo-relative path for a head-side document — virtual or real worktree file. */
+export function headDocPath(uri: vscode.Uri, localPath: string | undefined): string | undefined {
+  if (uri.scheme === DIFF_SCHEME) {
+    return parseRightUri(uri)?.filePath;
+  }
+  if (uri.scheme === 'file' && localPath) {
+    const rel = path.relative(localPath, uri.fsPath);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return rel.split(path.sep).join('/');
+    }
+  }
+  return undefined;
+}
+
+function fileExistsSync(p: string): boolean {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Parses a head-side diff URI back into its PR id and repo-relative path. */

@@ -10,6 +10,13 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
   project, branch) from the view toolbar.
 - **Review a PR** — click a PR to load its changed files; click a file to open a
   **base ↔ head diff** (read-only virtual documents).
+- **Local review** (opt-in) — check out the PR's head commit into an isolated
+  git **worktree** and review against it, so the head side of the diff is a real
+  file with full code intelligence: **go-to-definition, find references, grep,
+  and opening any neighboring file**. The lightweight ADO-only diff remains the
+  default; turn local review on from the Changed Files toolbar
+  (**Review locally**). Comments and **Impact analysis** retarget to the
+  checkout automatically.
 - **Comments** — ADO comment threads render inline on the head side; create,
   reply, and resolve, all round-tripping to ADO. Commenting is allowed on every
   line, so unchanged context can be annotated too. Start a comment on the
@@ -39,6 +46,9 @@ In Settings of the host window:
 - `reviewlens.project` — project name
 - `reviewlens.repository` — optional, to filter to one repo
 - `reviewlens.baseRef` — base ref for impact analysis (default `main`)
+- `reviewlens.localRepoPath` — optional, absolute path to a local clone for
+  local review. Empty = auto-detect from open workspace folders by matching the
+  repo's remote URL.
 
 Run **ReviewLens: Sign in (PAT)** (scope: Code Read & Write); the PAT is stored
 in SecretStorage.
@@ -66,7 +76,16 @@ src/
 ## Not yet implemented
 
 - **Suggested edits** (FR-23) — ADO has no native suggestion UI; deferred.
-- **Local checkout** — the diff uses the ADO content API; checking out the PR
-  branch (for go-to-definition / grep on the diff itself) is deferred to when
-  impact analysis is wired to the PR flow (currently it runs on the open repo).
 - **AI** (PR summary / risk / hunk explanation) — Phase 3.
+
+### Local review notes / limitations
+
+- Requires a local clone of the repo (auto-detected from open workspace folders,
+  or set `reviewlens.localRepoPath`). The PR's head commit is fetched if absent.
+- The worktree is **detached** and created under the extension's global storage,
+  so it never moves your branch or touches your working tree. It's reused across
+  iterations with the same head commit; worktrees are not yet auto-pruned.
+- The head file is a real, editable document — editing it will drift comment
+  anchors. Treat it as read-only while reviewing.
+- Starting local review requires at least one folder open (the worktree is added
+  as an extra workspace folder so the language server indexes the head version).
