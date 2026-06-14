@@ -69,6 +69,10 @@
         "title": "ReviewLens: Comment"
       },
       {
+        "command": "reviewlens.addComment",
+        "title": "ReviewLens: Add comment on current line"
+      },
+      {
         "command": "reviewlens.resolveThread",
         "title": "ReviewLens: Resolve thread",
         "icon": "$(check)"
@@ -160,6 +164,12 @@
         "command": "reviewlens.prevChange",
         "key": "alt+up",
         "when": "reviewlens.reviewActive && textInputFocus"
+      },
+      {
+        "command": "reviewlens.addComment",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "reviewlens.reviewActive && editorTextFocus && resourceScheme == reviewlens"
       },
       {
         "command": "reviewlens.createOrReply",

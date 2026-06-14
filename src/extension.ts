@@ -127,6 +127,8 @@ export function activate(context: vscode.ExtensionContext): void {
       comments.createOrReply(reply)
     ),
 
+    vscode.commands.registerCommand('reviewlens.addComment', () => comments.addCommentAtCursor()),
+
     vscode.commands.registerCommand('reviewlens.resolveThread', (thread: vscode.CommentThread) =>
       comments.resolve(thread)
     ),
