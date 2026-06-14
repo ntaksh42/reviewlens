@@ -34,3 +34,20 @@ export function sideUri(prId: number, side: Side, filePath: string): vscode.Uri 
     path: `/${side}/${prId}/${filePath}`,
   });
 }
+
+/** Parses a head-side diff URI back into its PR id and repo-relative path. */
+export function parseRightUri(uri: vscode.Uri): { prId: number; filePath: string } | undefined {
+  if (uri.scheme !== DIFF_SCHEME) {
+    return undefined;
+  }
+  const parts = uri.path.split('/'); // ['', 'right', '67', 'src', 'calc.ts']
+  if (parts[1] !== 'right' || parts.length < 4) {
+    return undefined;
+  }
+  const prId = Number(parts[2]);
+  const filePath = parts.slice(3).join('/');
+  if (!prId || !filePath) {
+    return undefined;
+  }
+  return { prId, filePath };
+}

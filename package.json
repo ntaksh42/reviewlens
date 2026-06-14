@@ -49,6 +49,15 @@
         "command": "reviewlens.toggleViewed",
         "title": "ReviewLens: Toggle viewed",
         "icon": "$(check)"
+      },
+      {
+        "command": "reviewlens.createOrReply",
+        "title": "ReviewLens: Comment"
+      },
+      {
+        "command": "reviewlens.resolveThread",
+        "title": "ReviewLens: Resolve thread",
+        "icon": "$(check)"
       }
     ],
     "menus": {
@@ -64,6 +73,20 @@
           "command": "reviewlens.toggleViewed",
           "when": "view == reviewlens.changedFiles && viewItem == changedFile",
           "group": "inline"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "reviewlens.createOrReply",
+          "group": "inline",
+          "when": "commentController == reviewlens"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "reviewlens.resolveThread",
+          "group": "navigation",
+          "when": "commentController == reviewlens && commentThread == open"
         }
       ]
     },

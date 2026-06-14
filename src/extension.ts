@@ -5,6 +5,7 @@ import { ReviewService } from './app/reviewService';
 import { PrListTreeProvider } from './ui/prListTreeProvider';
 import { ChangedFilesTreeProvider } from './ui/changedFilesTreeProvider';
 import { DiffContentProvider, DIFF_SCHEME, sideUri } from './ui/diffContentProvider';
+import { CommentsController } from './ui/commentsController';
 import { ViewedStore } from './infra/state/viewedStore';
 import { ChangedFile, PullRequestSummary } from './domain/models';
 import { createLogger } from './common/logger';
@@ -19,12 +20,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const prList = new PrListTreeProvider(prService);
   const changedFiles = new ChangedFilesTreeProvider();
   const diffProvider = new DiffContentProvider();
+  const comments = new CommentsController(reviewService);
   const changedFilesView = vscode.window.createTreeView('reviewlens.changedFiles', {
     treeDataProvider: changedFiles,
   });
 
   context.subscriptions.push(
     changedFilesView,
+    comments,
     vscode.window.registerTreeDataProvider('reviewlens.prList', prList),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider),
 
@@ -47,6 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('reviewlens.openPr', async (pr: PullRequestSummary) => {
       try {
         diffProvider.clear();
+        comments.clearAll();
         const data = await vscode.window.withProgress(
           { location: { viewId: 'reviewlens.changedFiles' } },
           () => reviewService.open(pr)
@@ -94,7 +98,16 @@ export function activate(context: vscode.ExtensionContext): void {
         right,
         `${name} (base ↔ head) — PR #${prId}`
       );
-    })
+      comments.renderForFile(file.path, right);
+    }),
+
+    vscode.commands.registerCommand('reviewlens.createOrReply', (reply: vscode.CommentReply) =>
+      comments.createOrReply(reply)
+    ),
+
+    vscode.commands.registerCommand('reviewlens.resolveThread', (thread: vscode.CommentThread) =>
+      comments.resolve(thread)
+    )
   );
 
   void prList.refresh();

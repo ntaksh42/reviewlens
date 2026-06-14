@@ -1,13 +1,16 @@
 import * as azdev from 'azure-devops-node-api';
 import {
+  CommentThreadStatus,
+  CommentType,
+  GitPullRequestCommentThread,
   GitPullRequestSearchCriteria,
   GitVersionType,
   PullRequestStatus,
   VersionControlChangeType,
 } from 'azure-devops-node-api/interfaces/GitInterfaces';
 import { AdoConfig } from '../config';
-import { ChangedFile, PullRequestSummary, ReviewData } from '../../domain/models';
-import { FileStatus } from '../../domain/types';
+import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../../domain/models';
+import { FileStatus, ThreadStatus } from '../../domain/types';
 
 /**
  * Thin wrapper over azure-devops-node-api. All ADO REST access goes through here
@@ -99,6 +102,132 @@ export class AdoClient {
     } catch {
       return '';
     }
+  }
+
+  async getThreads(prId: number, repositoryId: string): Promise<Thread[]> {
+    const git = await this.connection.getGitApi();
+    const threads = await git.getThreads(repositoryId, prId, this.config.project);
+    return (threads ?? []).filter((t) => !t.isDeleted).map(mapThread);
+  }
+
+  /** Create a new thread anchored to a line on the head (right) side. */
+  async createComment(
+    prId: number,
+    repositoryId: string,
+    filePath: string,
+    line: number,
+    content: string
+  ): Promise<void> {
+    const git = await this.connection.getGitApi();
+    const thread: GitPullRequestCommentThread = {
+      status: CommentThreadStatus.Active,
+      comments: [{ parentCommentId: 0, content, commentType: CommentType.Text }],
+      threadContext: {
+        filePath: ensureLead(filePath),
+        rightFileStart: { line, offset: 1 },
+        rightFileEnd: { line, offset: 1 },
+      },
+    };
+    await git.createThread(thread, repositoryId, prId, this.config.project);
+  }
+
+  async replyToThread(
+    prId: number,
+    repositoryId: string,
+    threadId: number,
+    content: string
+  ): Promise<void> {
+    const git = await this.connection.getGitApi();
+    await git.createComment(
+      { parentCommentId: 0, content, commentType: CommentType.Text },
+      repositoryId,
+      prId,
+      threadId,
+      this.config.project
+    );
+  }
+
+  async setThreadStatus(
+    prId: number,
+    repositoryId: string,
+    threadId: number,
+    status: ThreadStatus
+  ): Promise<void> {
+    const git = await this.connection.getGitApi();
+    await git.updateThread(
+      { status: toAdoStatus(status) },
+      repositoryId,
+      prId,
+      threadId,
+      this.config.project
+    );
+  }
+}
+
+function mapThread(t: GitPullRequestCommentThread): Thread {
+  const tc = t.threadContext;
+  const anchor = tc?.filePath
+    ? {
+        filePath: stripLead(tc.filePath),
+        side: 'right' as const,
+        start: {
+          line: tc.rightFileStart?.line ?? 1,
+          offset: tc.rightFileStart?.offset ?? 1,
+        },
+        end: {
+          line: tc.rightFileEnd?.line ?? tc.rightFileStart?.line ?? 1,
+          offset: tc.rightFileEnd?.offset ?? 1,
+        },
+      }
+    : null;
+  return {
+    id: t.id != null ? String(t.id) : null,
+    anchor,
+    status: fromAdoStatus(t.status),
+    comments: (t.comments ?? [])
+      .filter((c) => !c.isDeleted)
+      .map((c) => ({
+        id: c.id != null ? String(c.id) : undefined,
+        author: c.author?.displayName ?? 'unknown',
+        content: c.content ?? '',
+        publishedAt: c.publishedDate ? String(c.publishedDate) : undefined,
+        inReplyToId: c.parentCommentId ? String(c.parentCommentId) : undefined,
+      })),
+    isDraft: false,
+  };
+}
+
+function fromAdoStatus(s?: CommentThreadStatus): ThreadStatus {
+  switch (s) {
+    case CommentThreadStatus.Fixed:
+      return 'fixed';
+    case CommentThreadStatus.WontFix:
+      return 'wontFix';
+    case CommentThreadStatus.Closed:
+      return 'closed';
+    case CommentThreadStatus.ByDesign:
+      return 'byDesign';
+    case CommentThreadStatus.Pending:
+      return 'pending';
+    default:
+      return 'active';
+  }
+}
+
+function toAdoStatus(s: ThreadStatus): CommentThreadStatus {
+  switch (s) {
+    case 'fixed':
+      return CommentThreadStatus.Fixed;
+    case 'wontFix':
+      return CommentThreadStatus.WontFix;
+    case 'closed':
+      return CommentThreadStatus.Closed;
+    case 'byDesign':
+      return CommentThreadStatus.ByDesign;
+    case 'pending':
+      return CommentThreadStatus.Pending;
+    default:
+      return CommentThreadStatus.Active;
   }
 }
 
