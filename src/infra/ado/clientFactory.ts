@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { AdoClient } from './adoClient';
 import { AuthProvider } from './authProvider';
 import { AdoConfig, getAdoConfig, isConfigured } from '../config';
@@ -29,6 +30,14 @@ export async function createAdoClient(auth: AuthProvider): Promise<AdoClient> {
   return cached.client;
 }
 
+/** Drop the cached client (and the connection holding the PAT), e.g. on sign-out. */
+export function clearAdoClientCache(): void {
+  cached = undefined;
+}
+
 function cacheKey(config: AdoConfig, pat: string): string {
-  return JSON.stringify([config.orgUrl, config.project, config.repository, pat]);
+  // Hash the PAT rather than storing it verbatim, so the plaintext token isn't
+  // duplicated into a long-lived module-level string.
+  const patHash = createHash('sha256').update(pat).digest('hex');
+  return JSON.stringify([config.orgUrl, config.project, config.repository, patHash]);
 }

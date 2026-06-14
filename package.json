@@ -13,7 +13,9 @@
     "type": "git",
     "url": "https://github.com/ntaksh42/reviewlens.git"
   },
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -126,9 +128,8 @@
         "icon": "$(lightbulb)"
       },
       {
-        "command": "reviewlens.submitSuggestion",
-        "title": "ReviewLens: Submit suggestion",
-        "icon": "$(check)"
+        "command": "reviewlens.openFileDiff",
+        "title": "ReviewLens: Open file diff"
       },
       {
         "command": "reviewlens.applySuggestion",
@@ -180,8 +181,8 @@
           "when": "reviewlens.headEditor"
         },
         {
-          "command": "reviewlens.submitSuggestion",
-          "when": "reviewlens.suggestionDraft"
+          "command": "reviewlens.openFileDiff",
+          "when": "false"
         }
       ],
       "comments/commentThread/context": [
@@ -287,12 +288,6 @@
         "key": "ctrl+k s",
         "mac": "cmd+k s",
         "when": "reviewlens.headEditor && editorTextFocus"
-      },
-      {
-        "command": "reviewlens.submitSuggestion",
-        "key": "ctrl+k ctrl+s",
-        "mac": "cmd+k cmd+s",
-        "when": "reviewlens.suggestionDraft && editorTextFocus"
       }
     ],
     "configuration": {

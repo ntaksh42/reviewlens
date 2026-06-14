@@ -8,6 +8,7 @@ import { NavigationCursor } from './ui/navigationCursor';
 import { ViewedStore } from './infra/state/viewedStore';
 import { AnchorStore } from './infra/state/anchorStore';
 import { getCurrentBranch, repoRoot } from './infra/git/repo';
+import { clearAdoClientCache } from './infra/ado/clientFactory';
 import { getAutoAttachBranchPr, getSyncInterval } from './infra/config';
 import { ChangedFile, PullRequestSummary, Thread } from './domain/models';
 import { PrVote } from './domain/types';
@@ -328,8 +329,10 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   context.subscriptions.push(
+    log,
     changedFilesView,
     comments,
+    diffProvider,
     { dispose: stopSync },
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider),
 
@@ -344,6 +347,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('reviewlens.signOut', async () => {
       closeReview();
       await auth.clear();
+      // Drop the cached client so the revoked PAT isn't reused or retained.
+      clearAdoClientCache();
       vscode.window.showInformationMessage('ReviewLens: signed out.');
     }),
 
@@ -510,6 +515,9 @@ export function activate(context: vscode.ExtensionContext): void {
             action.kind === 'complete' ? 'completed' : 'abandoned'
           }.`
         );
+        // The PR is in a terminal state now; drop its persisted viewed/anchor
+        // state so workspaceState doesn't accumulate dead PRs forever.
+        await Promise.all([viewedStore.clear(current.pr.id), anchorStore.clear(current.pr.id)]);
         closeReview();
       } catch (e) {
         vscode.window.showErrorMessage(
@@ -604,12 +612,16 @@ export function activate(context: vscode.ExtensionContext): void {
         editor ? comments.isHeadDocument(editor.document.uri) : false
       );
       void (async () => {
-        await maybeAutoAttach();
-        // A changed file auto-opens as a diff that also renders its comments; for
-        // everything else (unchanged files, or a diff already open) render onto
-        // the editor as-is.
-        if (!(await maybeAutoDiff(editor))) {
-          await renderActiveEditor();
+        try {
+          await maybeAutoAttach();
+          // A changed file auto-opens as a diff that also renders its comments;
+          // for everything else (unchanged files, or a diff already open) render
+          // onto the editor as-is.
+          if (!(await maybeAutoDiff(editor))) {
+            await renderActiveEditor();
+          }
+        } catch (e) {
+          log.error('active-editor change handler failed', e);
         }
       })();
     }),

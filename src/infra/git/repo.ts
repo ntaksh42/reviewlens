@@ -1,11 +1,12 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const run = promisify(exec);
+const run = promisify(execFile);
 
+// Use execFile (no shell) so branch names / paths can never be interpreted as
+// shell metacharacters — argv is passed straight to git, no quoting needed.
 async function git(cwd: string, args: string[]): Promise<string> {
-  const quoted = args.map((a) => (/[\s"']/.test(a) ? JSON.stringify(a) : a)).join(' ');
-  const { stdout } = await run(`git ${quoted}`, { cwd, maxBuffer: 64 * 1024 * 1024 });
+  const { stdout } = await run('git', args, { cwd, maxBuffer: 64 * 1024 * 1024 });
   return stdout.trim();
 }
 

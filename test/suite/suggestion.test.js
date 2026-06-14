@@ -60,6 +60,30 @@ describe('threadsSignature', () => {
     assert.notStrictEqual(threadsSignature([edited]), before);
   });
 
+  it('changes when a same-length edit swaps the body (hashes, not length)', () => {
+    const original = fx.plainThread.comments[0].content;
+    const swapped = 'X'.repeat(original.length); // identical length, different text
+    const before = threadsSignature([fx.plainThread]);
+    const edited = {
+      ...fx.plainThread,
+      comments: [{ ...fx.plainThread.comments[0], content: swapped }],
+    };
+    assert.strictEqual(swapped.length, original.length);
+    assert.notStrictEqual(threadsSignature([edited]), before);
+  });
+
+  it('changes when a thread is re-anchored to a different line', () => {
+    const before = threadsSignature([fx.plainThread]);
+    const moved = {
+      ...fx.plainThread,
+      anchor: {
+        ...fx.plainThread.anchor,
+        start: { ...fx.plainThread.anchor.start, line: fx.plainThread.anchor.start.line + 5 },
+      },
+    };
+    assert.notStrictEqual(threadsSignature([moved]), before);
+  });
+
   it('is empty for no threads', () => {
     assert.strictEqual(threadsSignature([]), '');
   });

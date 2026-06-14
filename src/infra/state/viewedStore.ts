@@ -23,4 +23,9 @@ export class ViewedStore {
     await this.state.update(this.key(prId), [...set]);
     return nowViewed;
   }
+
+  /** Forget a PR's viewed state (e.g. once it is completed/abandoned). */
+  async clear(prId: number): Promise<void> {
+    await this.state.update(this.key(prId), undefined);
+  }
 }

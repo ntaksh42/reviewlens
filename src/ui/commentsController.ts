@@ -270,8 +270,23 @@ export class CommentsController {
     if (!doc) {
       return;
     }
-    const startLine = Math.max(0, anchor.start.line - 1);
-    const endLine = Math.min(doc.lineCount - 1, Math.max(startLine, anchor.end.line - 1));
+    // Re-anchor exactly as renderForFile does, so we replace the lines the thread
+    // is *shown* on — not the stale stored anchor, which may have drifted across
+    // pushes and would otherwise clobber unrelated code (FR-10).
+    const prId = this.review.currentPrId;
+    const snapshot =
+      prId != null && t.adoThreadId != null ? this.anchors.get(prId, t.adoThreadId) : undefined;
+    const storedStart = Math.max(0, anchor.start.line - 1);
+    const { line: startLine, drift } = resolveAnchorLine(doc, storedStart, snapshot?.text);
+    if (drift === 'lost') {
+      vscode.window.showWarningMessage(
+        'ReviewLens: the suggestion’s anchor has drifted and could not be located — apply it manually.'
+      );
+      return;
+    }
+    // Shift the end by the same delta the start moved, preserving the span length.
+    const span = Math.max(0, anchor.end.line - anchor.start.line);
+    const endLine = Math.min(doc.lineCount - 1, startLine + span);
     const range = new vscode.Range(
       startLine,
       0,
