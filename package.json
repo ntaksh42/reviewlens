@@ -4,6 +4,7 @@
   "description": "Navigation-first pull request review for Azure DevOps.",
   "version": "0.0.1",
   "publisher": "reviewlens",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -125,6 +126,11 @@
         "icon": "$(lightbulb)"
       },
       {
+        "command": "reviewlens.submitSuggestion",
+        "title": "ReviewLens: Submit suggestion",
+        "icon": "$(check)"
+      },
+      {
         "command": "reviewlens.applySuggestion",
         "title": "ReviewLens: Apply suggestion",
         "icon": "$(check)"
@@ -172,6 +178,10 @@
         {
           "command": "reviewlens.addSuggestion",
           "when": "reviewlens.headEditor"
+        },
+        {
+          "command": "reviewlens.submitSuggestion",
+          "when": "reviewlens.suggestionDraft"
         }
       ],
       "comments/commentThread/context": [
@@ -277,6 +287,12 @@
         "key": "ctrl+k s",
         "mac": "cmd+k s",
         "when": "reviewlens.headEditor && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.submitSuggestion",
+        "key": "ctrl+k ctrl+s",
+        "mac": "cmd+k cmd+s",
+        "when": "reviewlens.suggestionDraft && editorTextFocus"
       }
     ],
     "configuration": {
