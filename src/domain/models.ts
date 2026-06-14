@@ -62,6 +62,7 @@ export interface PullRequestSummary {
   id: number;
   title: string;
   author: string;
+  project: string;
   repository: string;
   repositoryId: string;
   sourceBranch: string;

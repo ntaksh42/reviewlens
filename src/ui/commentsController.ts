@@ -68,6 +68,9 @@ export class CommentsController {
   }
 
   async createOrReply(reply: vscode.CommentReply): Promise<void> {
+    if (!reply?.thread || !reply.text?.trim()) {
+      return;
+    }
     const thread = reply.thread as TrackedThread;
     const info = parseRightUri(thread.uri);
     if (!info) {

@@ -5,12 +5,15 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
 
 ## Features
 
-- **PR list** — active pull requests for the configured org/project.
+- **PR list** — active pull requests for the configured org/project, grouped by
+  **project → repository**, with a free-text **filter** (title, author, repo,
+  project, branch) from the view toolbar.
 - **Review a PR** — click a PR to load its changed files; click a file to open a
   **base ↔ head diff** (read-only virtual documents).
 - **Comments** — ADO comment threads render inline on the head side; create,
   reply, and resolve, all round-tripping to ADO. Commenting is allowed on every
-  line, so unchanged context can be annotated too.
+  line, so unchanged context can be annotated too. Submit a comment with
+  `ctrl+enter` (`cmd+enter` on macOS).
 - **Viewed** — toggle a file as viewed (persisted per PR).
 - **Impact analysis** (the differentiator) — for each changed function, list its
   callers and flag the ones **not changed in this PR** (the blast radius). Runs
@@ -44,7 +47,8 @@ in SecretStorage.
 | Action | Key |
 |---|---|
 | Next / previous changed file | `shift+alt+]` / `shift+alt+[` |
-| Next / previous change in diff | `alt+]` / `alt+[` |
+| Next / previous change in diff | `alt+down` / `alt+up` |
+| Submit comment | `ctrl+enter` (`cmd+enter` on macOS) |
 
 ## Layout
 
