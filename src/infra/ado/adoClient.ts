@@ -3,6 +3,7 @@ import { IGitApi } from 'azure-devops-node-api/GitApi';
 import {
   CommentThreadStatus,
   CommentType,
+  GitPullRequest,
   GitPullRequestCommentThread,
   GitPullRequestSearchCriteria,
   GitVersionType,
@@ -11,7 +12,7 @@ import {
 } from 'azure-devops-node-api/interfaces/GitInterfaces';
 import { AdoConfig } from '../config';
 import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../../domain/models';
-import { FileStatus, ThreadStatus } from '../../domain/types';
+import { FileStatus, PrVote, ThreadStatus } from '../../domain/types';
 
 /** Character span (1-based line + column) for anchoring a comment. */
 export interface CommentTarget {
@@ -139,14 +140,18 @@ export class AdoClient {
     return (threads ?? []).filter((t) => !t.isDeleted).map(mapThread);
   }
 
-  /** Create a thread anchored to a character span on the head (right) side. */
+  /**
+   * Create a thread anchored to a character span on the head (right) side.
+   * Returns the new thread's id so its anchor can be snapshotted for
+   * re-anchoring across iterations (FR-10, anchor drift).
+   */
   async createComment(
     prId: number,
     repositoryId: string,
     filePath: string,
     target: CommentTarget,
     content: string
-  ): Promise<void> {
+  ): Promise<number | undefined> {
     const git = await this.git();
     const thread: GitPullRequestCommentThread = {
       status: CommentThreadStatus.Active,
@@ -157,7 +162,8 @@ export class AdoClient {
         rightFileEnd: { line: target.endLine, offset: target.endOffset },
       },
     };
-    await git.createThread(thread, repositoryId, prId, this.config.project);
+    const created = await git.createThread(thread, repositoryId, prId, this.config.project);
+    return created?.id ?? undefined;
   }
 
   async replyToThread(
@@ -190,6 +196,78 @@ export class AdoClient {
       threadId,
       this.config.project
     );
+  }
+
+  /**
+   * Record the signed-in reviewer's vote on a PR (FR-20). A reviewer may only
+   * set their own vote, so the vote is keyed to the authenticated user id.
+   */
+  async setVote(prId: number, repositoryId: string, vote: PrVote): Promise<void> {
+    const git = await this.git();
+    const reviewerId = await this.authenticatedUserId();
+    await git.createPullRequestReviewer(
+      { vote: voteValue(vote) },
+      repositoryId,
+      prId,
+      reviewerId,
+      this.config.project
+    );
+  }
+
+  /** Abandon a PR (FR-21). */
+  async abandonPullRequest(prId: number, repositoryId: string): Promise<void> {
+    await this.updateStatus(prId, repositoryId, { status: PullRequestStatus.Abandoned });
+  }
+
+  /**
+   * Complete (merge) a PR (FR-21). `headCommit` is required as the merge source;
+   * ADO rejects completion without an explicit last-merge-source commit. The
+   * merge strategy and branch deletion are left to ADO/branch policy defaults.
+   */
+  async completePullRequest(
+    prId: number,
+    repositoryId: string,
+    headCommit: string
+  ): Promise<void> {
+    await this.updateStatus(prId, repositoryId, {
+      status: PullRequestStatus.Completed,
+      lastMergeSourceCommit: { commitId: headCommit },
+    });
+  }
+
+  private async updateStatus(
+    prId: number,
+    repositoryId: string,
+    update: GitPullRequest
+  ): Promise<void> {
+    const git = await this.git();
+    await git.updatePullRequest(update, repositoryId, prId, this.config.project);
+  }
+
+  /** GUID of the PAT's owner, needed to attribute a reviewer vote. */
+  private async authenticatedUserId(): Promise<string> {
+    const data = await this.connection.connect();
+    const id = data.authenticatedUser?.id;
+    if (!id) {
+      throw new Error('could not resolve the signed-in user — check the PAT.');
+    }
+    return id;
+  }
+}
+
+/** Maps a reviewer verdict to ADO's numeric vote scale. */
+function voteValue(vote: PrVote): number {
+  switch (vote) {
+    case 'approve':
+      return 10;
+    case 'approveWithSuggestions':
+      return 5;
+    case 'waitForAuthor':
+      return -5;
+    case 'reject':
+      return -10;
+    case 'reset':
+      return 0;
   }
 }
 

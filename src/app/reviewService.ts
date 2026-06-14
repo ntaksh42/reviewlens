@@ -2,7 +2,7 @@ import { AuthProvider } from '../infra/ado/authProvider';
 import { AdoClient, CommentTarget } from '../infra/ado/adoClient';
 import { createAdoClient } from '../infra/ado/clientFactory';
 import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../domain/models';
-import { Side } from '../domain/types';
+import { PrVote, Side } from '../domain/types';
 
 interface ActiveReview {
   pr: PullRequestSummary;
@@ -25,6 +25,11 @@ export class ReviewService {
 
   get current(): ActiveReview | undefined {
     return this.active;
+  }
+
+  /** Id of the PR under review, or undefined when none is open. */
+  get currentPrId(): number | undefined {
+    return this.active?.pr.id;
   }
 
   async open(pr: PullRequestSummary): Promise<ReviewData> {
@@ -86,13 +91,19 @@ export class ReviewService {
     return this.active?.threads.filter((t) => t.anchor?.filePath === path) ?? [];
   }
 
-  async createComment(filePath: string, target: CommentTarget, text: string): Promise<void> {
+  /** Create a comment and return the new ADO thread id (for anchor snapshots). */
+  async createComment(
+    filePath: string,
+    target: CommentTarget,
+    text: string
+  ): Promise<number | undefined> {
     if (!this.active) {
-      return;
+      return undefined;
     }
     const { client, pr, data } = this.active;
-    await client.createComment(pr.id, data.repositoryId, filePath, target, text);
+    const threadId = await client.createComment(pr.id, data.repositoryId, filePath, target, text);
     await this.refreshThreads();
+    return threadId;
   }
 
   async reply(threadId: number, text: string): Promise<void> {
@@ -111,6 +122,36 @@ export class ReviewService {
     const { client, pr, data } = this.active;
     await client.setThreadStatus(pr.id, data.repositoryId, threadId, 'closed');
     await this.refreshThreads();
+  }
+
+  /** Cast the signed-in reviewer's vote on the open PR (FR-20). */
+  async vote(vote: PrVote): Promise<void> {
+    if (!this.active) {
+      return;
+    }
+    const { client, pr, data } = this.active;
+    await client.setVote(pr.id, data.repositoryId, vote);
+  }
+
+  /** Complete (merge) the open PR (FR-21). */
+  async completePr(): Promise<void> {
+    if (!this.active) {
+      return;
+    }
+    const { client, pr, data } = this.active;
+    if (!data.headCommit) {
+      throw new Error('the PR head commit is unknown.');
+    }
+    await client.completePullRequest(pr.id, data.repositoryId, data.headCommit);
+  }
+
+  /** Abandon the open PR (FR-21). */
+  async abandonPr(): Promise<void> {
+    if (!this.active) {
+      return;
+    }
+    const { client, pr, data } = this.active;
+    await client.abandonPullRequest(pr.id, data.repositoryId);
   }
 
   private async refreshThreads(): Promise<void> {

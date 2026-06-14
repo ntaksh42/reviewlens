@@ -9,6 +9,7 @@ import { CommentsController } from './ui/commentsController';
 import { ImpactTreeProvider } from './ui/impactTreeProvider';
 import { NavigationCursor } from './ui/navigationCursor';
 import { ViewedStore } from './infra/state/viewedStore';
+import { AnchorStore } from './infra/state/anchorStore';
 import { analyzeImpact } from './infra/lsp/impactAnalyzer';
 import {
   resolveLocalRepo,
@@ -18,6 +19,7 @@ import {
 } from './infra/git/worktree';
 import { getLocalRepoPath, getLocalWorktreeLimit } from './infra/config';
 import { ChangedFile, PullRequestSummary } from './domain/models';
+import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
 import * as path from 'path';
 
@@ -27,11 +29,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const prService = new PullRequestService(auth);
   const reviewService = new ReviewService(auth);
   const viewedStore = new ViewedStore(context.workspaceState);
+  const anchorStore = new AnchorStore(context.workspaceState);
 
   const prList = new PrListTreeProvider(prService);
   const changedFiles = new ChangedFilesTreeProvider();
   const diffProvider = new DiffContentProvider();
-  const comments = new CommentsController(reviewService);
+  const comments = new CommentsController(reviewService, anchorStore);
   const impact = new ImpactTreeProvider();
   const cursor = new NavigationCursor();
   const changedFilesView = vscode.window.createTreeView('reviewlens.changedFiles', {
@@ -60,6 +63,17 @@ export function activate(context: vscode.ExtensionContext): void {
     if (idx > 0) {
       vscode.workspace.updateWorkspaceFolders(idx, 1);
     }
+  }
+
+  /** Tear down all review UI — used after a PR leaves the active list. */
+  function closeReview(): void {
+    teardownLocal();
+    diffProvider.clear();
+    comments.clearAll();
+    changedFiles.setFiles([], new Set());
+    changedFilesView.description = undefined;
+    cursor.setFiles([]);
+    void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', false);
   }
 
   context.subscriptions.push(
@@ -241,7 +255,7 @@ export function activate(context: vscode.ExtensionContext): void {
           // ignore
         }
       }
-      comments.renderForFile(file.path, right);
+      await comments.renderForFile(file.path, right);
     }),
 
     vscode.commands.registerCommand('reviewlens.createOrReply', (reply: vscode.CommentReply) =>
@@ -253,6 +267,82 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('reviewlens.resolveThread', (thread: vscode.CommentThread) =>
       comments.resolve(thread)
     ),
+
+    vscode.commands.registerCommand('reviewlens.castVote', async () => {
+      const current = reviewService.current;
+      if (!current) {
+        vscode.window.showWarningMessage('ReviewLens: open a pull request first.');
+        return;
+      }
+      type Action = { kind: 'vote'; vote: PrVote } | { kind: 'complete' } | { kind: 'abandon' };
+      interface VoteItem extends vscode.QuickPickItem {
+        action?: Action;
+      }
+      const items: VoteItem[] = [
+        { label: '$(thumbsup) Approve', action: { kind: 'vote', vote: 'approve' } },
+        {
+          label: '$(thumbsup) Approve with suggestions',
+          action: { kind: 'vote', vote: 'approveWithSuggestions' },
+        },
+        {
+          label: '$(comment) Wait for the author',
+          action: { kind: 'vote', vote: 'waitForAuthor' },
+        },
+        { label: '$(thumbsdown) Reject', action: { kind: 'vote', vote: 'reject' } },
+        { label: '$(circle-slash) Reset vote', action: { kind: 'vote', vote: 'reset' } },
+        { label: 'Pull request', kind: vscode.QuickPickItemKind.Separator },
+        { label: '$(git-merge) Complete (merge) pull request…', action: { kind: 'complete' } },
+        { label: '$(trash) Abandon pull request…', action: { kind: 'abandon' } },
+      ];
+      const picked = await vscode.window.showQuickPick(items, {
+        title: `PR #${current.pr.id} — ${current.pr.title}`,
+        placeHolder: 'Cast your review verdict, or complete / abandon the PR',
+      });
+      const action = picked?.action;
+      if (!action) {
+        return;
+      }
+      try {
+        if (action.kind === 'vote') {
+          await vscode.window.withProgress(
+            { location: { viewId: 'reviewlens.changedFiles' }, title: 'Submitting vote…' },
+            () => reviewService.vote(action.vote)
+          );
+          vscode.window.showInformationMessage(`ReviewLens: ${voteLabel(action.vote)}.`);
+          return;
+        }
+        // Complete and Abandon change the PR's state irreversibly from here, so
+        // confirm before round-tripping to ADO.
+        const verb = action.kind === 'complete' ? 'Complete' : 'Abandon';
+        const detail =
+          action.kind === 'complete'
+            ? 'Merges the PR into its target branch using your ADO/branch-policy defaults.'
+            : 'Abandons the PR. It can be reactivated later in Azure DevOps.';
+        const confirm = await vscode.window.showWarningMessage(
+          `${verb} PR #${current.pr.id}?`,
+          { modal: true, detail },
+          verb
+        );
+        if (confirm !== verb) {
+          return;
+        }
+        await vscode.window.withProgress(
+          { location: { viewId: 'reviewlens.changedFiles' }, title: `${verb} pull request…` },
+          () => (action.kind === 'complete' ? reviewService.completePr() : reviewService.abandonPr())
+        );
+        vscode.window.showInformationMessage(
+          `ReviewLens: PR #${current.pr.id} ${
+            action.kind === 'complete' ? 'completed' : 'abandoned'
+          }.`
+        );
+        closeReview();
+        await prList.refresh();
+      } catch (e) {
+        vscode.window.showErrorMessage(
+          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }),
 
     vscode.commands.registerCommand('reviewlens.analyzeImpact', async () => {
       // When local review is on, analyze the PR's head worktree against its real
@@ -317,6 +407,22 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void prList.refresh();
   log.info('ReviewLens activated.');
+}
+
+/** Human-readable confirmation shown after a vote is recorded. */
+function voteLabel(vote: PrVote): string {
+  switch (vote) {
+    case 'approve':
+      return 'approved';
+    case 'approveWithSuggestions':
+      return 'approved with suggestions';
+    case 'waitForAuthor':
+      return 'marked “wait for the author”';
+    case 'reject':
+      return 'rejected';
+    case 'reset':
+      return 'vote reset';
+  }
 }
 
 export function deactivate(): void {}

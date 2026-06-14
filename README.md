@@ -21,7 +21,13 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
   reply, and resolve, all round-tripping to ADO. Commenting is allowed on every
   line, so unchanged context can be annotated too. Start a comment on the
   current line with `ctrl+;` (`cmd+;` on macOS) and submit it with
-  `ctrl+enter` (`cmd+enter` on macOS) — no mouse required.
+  `ctrl+enter` (`cmd+enter` on macOS) — no mouse required. Comments **re-anchor**
+  to their original line if later pushes shift it, and are flagged (`↕`/`⚠`) when
+  they had to move.
+- **Vote & finish** — record your verdict (**Approve / Approve with suggestions /
+  Wait for the author / Reject / Reset**) and **Complete (merge)** or **Abandon**
+  the PR, all from the Changed Files toolbar (**Vote / complete…**, thumbs-up
+  icon). Completing and abandoning ask for confirmation first.
 - **Viewed** — toggle a file as viewed (persisted per PR).
 - **Impact analysis** (the differentiator) — for each changed function, list its
   callers and flag the ones **not changed in this PR** (the blast radius). Runs
