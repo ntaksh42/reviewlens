@@ -402,9 +402,25 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('reviewlens.prevChange', () =>
       vscode.commands.executeCommand('workbench.action.compareEditor.previousChange')
-    )
+    ),
+
+    // Track whether the active editor is a head-side review doc, so the
+    // "add comment" key (Ctrl+[) only overrides outdent on those documents.
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void vscode.commands.executeCommand(
+        'setContext',
+        'reviewlens.headEditor',
+        editor ? comments.isHeadDocument(editor.document.uri) : false
+      );
+    })
   );
 
+  const active = vscode.window.activeTextEditor;
+  void vscode.commands.executeCommand(
+    'setContext',
+    'reviewlens.headEditor',
+    active ? comments.isHeadDocument(active.document.uri) : false
+  );
   void prList.refresh();
   log.info('ReviewLens activated.');
 }

@@ -197,15 +197,15 @@
       },
       {
         "command": "reviewlens.addComment",
-        "key": "ctrl+;",
-        "mac": "cmd+;",
-        "when": "reviewlens.reviewActive && editorTextFocus && resourceScheme == reviewlens"
+        "key": "ctrl+[",
+        "mac": "cmd+[",
+        "when": "reviewlens.headEditor && editorTextFocus"
       },
       {
         "command": "reviewlens.createOrReply",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "commentEditorFocused && commentController == reviewlens"
+        "when": "commentEditorFocused"
       }
     ],
     "configuration": {

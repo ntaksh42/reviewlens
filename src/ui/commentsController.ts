@@ -56,6 +56,11 @@ export class CommentsController {
     return filePath;
   }
 
+  /** True when a document is a head-side review doc we accept comments on. */
+  isHeadDocument(uri: vscode.Uri): boolean {
+    return this.headPath(uri) !== undefined;
+  }
+
   dispose(): void {
     this.controller.dispose();
   }

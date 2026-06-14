@@ -67,7 +67,7 @@ in SecretStorage.
 |---|---|
 | Next / previous changed file | `shift+alt+]` / `shift+alt+[` |
 | Next / previous change in diff | `alt+down` / `alt+up` |
-| Add comment on current line | `ctrl+;` (`cmd+;` on macOS) |
+| Add comment on current line | `ctrl+[` (`cmd+[` on macOS) |
 | Submit comment | `ctrl+enter` (`cmd+enter` on macOS) |
 
 ## Layout
