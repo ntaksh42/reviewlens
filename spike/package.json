@@ -1,0 +1,57 @@
+{
+  "name": "reviewlens-impact-spike",
+  "displayName": "ReviewLens Impact Spike",
+  "description": "Spike: highlight unchanged callers of changed functions (no PR plumbing).",
+  "version": "0.0.1",
+  "publisher": "reviewlens-dev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "reviewlens.analyzeImpact",
+        "title": "ReviewLens: Analyze Impact (changed vs base)",
+        "icon": "$(search)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reviewlensSpike",
+          "title": "ReviewLens",
+          "icon": "$(telescope)"
+        }
+      ]
+    },
+    "views": {
+      "reviewlensSpike": [
+        {
+          "id": "reviewlensImpact",
+          "name": "Impact"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "reviewlens.analyzeImpact",
+          "when": "view == reviewlensImpact",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ReviewLens Spike",
+      "properties": {
+        "reviewlens.baseRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Base ref to diff against (e.g. main, origin/main). Falls back to working-tree changes if not found."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "name": "reviewlens",
+  "displayName": "ReviewLens",
+  "description": "Navigation-first pull request review for Azure DevOps.",
+  "version": "0.0.1",
+  "publisher": "reviewlens",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "reviewlens",
+          "title": "ReviewLens",
+          "icon": "$(git-pull-request)"
+        }
+      ]
+    },
+    "views": {
+      "reviewlens": [
+        {
+          "id": "reviewlens.prList",
+          "name": "Pull Requests"
+        },
+        {
+          "id": "reviewlens.changedFiles",
+          "name": "Changed Files"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "reviewlens.signIn",
+        "title": "ReviewLens: Sign in (PAT)"
+      },
+      {
+        "command": "reviewlens.signOut",
+        "title": "ReviewLens: Sign out"
+      },
+      {
+        "command": "reviewlens.refreshPrs",
+        "title": "ReviewLens: Refresh Pull Requests",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "reviewlens.refreshPrs",
+          "when": "view == reviewlens.prList",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ReviewLens",
+      "properties": {
+        "reviewlens.orgUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Azure DevOps organization URL, e.g. https://dev.azure.com/your-org"
+        },
+        "reviewlens.project": {
+          "type": "string",
+          "default": "",
+          "description": "Azure DevOps project name."
+        },
+        "reviewlens.repository": {
+          "type": "string",
+          "default": "",
+          "description": "Optional: repository name to filter PRs. Empty = all repos in the project."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "vscode:prepublish": "node esbuild.js --production",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^3.0.0",
+    "esbuild": "^0.28.1",
+    "glob": "^13.0.6",
+    "mocha": "^11.7.6",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "azure-devops-node-api": "^14.0.0"
+  }
+}
