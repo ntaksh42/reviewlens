@@ -92,6 +92,32 @@
       {
         "command": "reviewlens.prevChange",
         "title": "ReviewLens: Previous change"
+      },
+      {
+        "command": "reviewlens.nextComment",
+        "title": "ReviewLens: Next comment"
+      },
+      {
+        "command": "reviewlens.prevComment",
+        "title": "ReviewLens: Previous comment"
+      },
+      {
+        "command": "reviewlens.nextUnresolvedComment",
+        "title": "ReviewLens: Next unresolved comment"
+      },
+      {
+        "command": "reviewlens.prevUnresolvedComment",
+        "title": "ReviewLens: Previous unresolved comment"
+      },
+      {
+        "command": "reviewlens.searchComments",
+        "title": "ReviewLens: Search comments",
+        "icon": "$(search)"
+      },
+      {
+        "command": "reviewlens.openCommentsPanel",
+        "title": "ReviewLens: Open comments panel",
+        "icon": "$(comment-discussion)"
       }
     ],
     "menus": {
@@ -102,9 +128,19 @@
           "group": "navigation@0"
         },
         {
-          "command": "reviewlens.castVote",
+          "command": "reviewlens.searchComments",
           "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
           "group": "navigation@1"
+        },
+        {
+          "command": "reviewlens.openCommentsPanel",
+          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
+          "group": "navigation@2"
+        },
+        {
+          "command": "reviewlens.castVote",
+          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -160,6 +196,40 @@
         "key": "ctrl+[",
         "mac": "cmd+[",
         "when": "reviewlens.headEditor && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.nextComment",
+        "key": "alt+]",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.prevComment",
+        "key": "alt+[",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.nextUnresolvedComment",
+        "key": "ctrl+alt+]",
+        "mac": "cmd+alt+]",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.prevUnresolvedComment",
+        "key": "ctrl+alt+[",
+        "mac": "cmd+alt+[",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.searchComments",
+        "key": "ctrl+k f",
+        "mac": "cmd+k f",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.openCommentsPanel",
+        "key": "ctrl+k c",
+        "mac": "cmd+k c",
+        "when": "reviewlens.reviewActive"
       },
       {
         "command": "reviewlens.castVote",

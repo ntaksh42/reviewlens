@@ -9,7 +9,7 @@ import { ViewedStore } from './infra/state/viewedStore';
 import { AnchorStore } from './infra/state/anchorStore';
 import { getCurrentBranch, repoRoot } from './infra/git/repo';
 import { getAutoAttachBranchPr } from './infra/config';
-import { ChangedFile, PullRequestSummary } from './domain/models';
+import { ChangedFile, PullRequestSummary, Thread } from './domain/models';
 import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
 
@@ -166,6 +166,80 @@ export function activate(context: vscode.ExtensionContext): void {
     if (filePath) {
       await comments.renderForFile(filePath, editor.document.uri);
     }
+  }
+
+  /** Anchored threads sorted by file then line, the order navigation walks. */
+  function sortedAnchoredThreads(unresolvedOnly = false): Thread[] {
+    return reviewService.threads
+      .filter((t) => t.anchor && (!unresolvedOnly || t.status !== 'closed'))
+      .sort((a, b) => {
+        const fa = a.anchor!.filePath;
+        const fb = b.anchor!.filePath;
+        return fa === fb ? a.anchor!.start.line - b.anchor!.start.line : fa.localeCompare(fb);
+      });
+  }
+
+  /** (filePath, line) of the active head-side editor's cursor, for "next from here". */
+  function currentLocation(): { filePath: string; line: number } | undefined {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return undefined;
+    }
+    const filePath = comments.headDocumentPath(editor.document.uri);
+    return filePath ? { filePath, line: editor.selection.active.line + 1 } : undefined;
+  }
+
+  /** Open the thread's file, move the cursor to its anchor line, and show it. */
+  async function revealThread(thread: Thread): Promise<void> {
+    const anchor = thread.anchor;
+    const prId = reviewService.currentPrId;
+    if (!anchor || prId == null) {
+      return;
+    }
+    const uri = headUri(prId, anchor.filePath, reviewService.localPath);
+    const line = Math.max(0, anchor.start.line - 1);
+    const editor = await vscode.window.showTextDocument(uri);
+    const pos = new vscode.Position(line, 0);
+    editor.selection = new vscode.Selection(pos, pos);
+    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+    // Render with the jumped-to thread expanded, matching a Comments-panel click.
+    await comments.renderForFile(
+      anchor.filePath,
+      uri,
+      thread.id != null ? Number(thread.id) : undefined
+    );
+  }
+
+  /** Jump to the next/prev (optionally unresolved) comment, wrapping at the ends. */
+  async function jumpComment(dir: 'next' | 'prev', unresolvedOnly: boolean): Promise<void> {
+    const list = sortedAnchoredThreads(unresolvedOnly);
+    if (list.length === 0) {
+      vscode.window.showInformationMessage(
+        unresolvedOnly
+          ? 'ReviewLens: no unresolved comments.'
+          : 'ReviewLens: no comments on this pull request.'
+      );
+      return;
+    }
+    const here = currentLocation();
+    const isAfter = (t: Thread): boolean => {
+      if (!here) {
+        return true;
+      }
+      const a = t.anchor!;
+      return (
+        a.filePath > here.filePath ||
+        (a.filePath === here.filePath && a.start.line > here.line)
+      );
+    };
+    let target: Thread;
+    if (dir === 'next') {
+      target = list.find(isAfter) ?? list[0];
+    } else {
+      const before = list.filter((t) => !isAfter(t) && !samePosition(t, here));
+      target = before[before.length - 1] ?? list[list.length - 1];
+    }
+    await revealThread(target);
   }
 
   /** True when a base↔head diff for `filePath` is already open in some tab. */
@@ -420,6 +494,55 @@ export function activate(context: vscode.ExtensionContext): void {
       attachToBranchPr(false)
     ),
 
+    vscode.commands.registerCommand('reviewlens.nextComment', () =>
+      jumpComment('next', false)
+    ),
+    vscode.commands.registerCommand('reviewlens.prevComment', () =>
+      jumpComment('prev', false)
+    ),
+    vscode.commands.registerCommand('reviewlens.nextUnresolvedComment', () =>
+      jumpComment('next', true)
+    ),
+    vscode.commands.registerCommand('reviewlens.prevUnresolvedComment', () =>
+      jumpComment('prev', true)
+    ),
+
+    vscode.commands.registerCommand('reviewlens.searchComments', async () => {
+      const anchored = sortedAnchoredThreads();
+      if (anchored.length === 0) {
+        vscode.window.showInformationMessage('ReviewLens: no comments on this pull request.');
+        return;
+      }
+      interface CommentItem extends vscode.QuickPickItem {
+        thread: Thread;
+      }
+      const items: CommentItem[] = anchored.map((t) => {
+        const first = t.comments[0];
+        const replies = t.comments.length - 1;
+        return {
+          label: first ? `${first.author}: ${oneLine(first.content)}` : '(empty)',
+          description: `${t.anchor!.filePath}:${t.anchor!.start.line}`,
+          detail:
+            (t.status !== 'closed' ? '$(comment) open' : '$(check) resolved') +
+            (replies > 0 ? ` · ${replies} repl${replies === 1 ? 'y' : 'ies'}` : ''),
+          thread: t,
+        };
+      });
+      const picked = await vscode.window.showQuickPick(items, {
+        title: 'ReviewLens — search comments',
+        placeHolder: 'Filter by author, text, file, or line',
+        matchOnDescription: true,
+        matchOnDetail: true,
+      });
+      if (picked) {
+        await revealThread(picked.thread);
+      }
+    }),
+
+    vscode.commands.registerCommand('reviewlens.openCommentsPanel', () =>
+      vscode.commands.executeCommand('workbench.action.focusCommentsPanel')
+    ),
+
     // Track whether the active editor is a head-side review doc, so the
     // "add comment" key (Ctrl+[) only overrides outdent on those documents.
     // In live branch-attach mode, also pick up a branch switch, auto-open a
@@ -455,6 +578,21 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   void maybeAutoAttach();
   log.info('ReviewLens activated.');
+}
+
+/** True when a thread sits exactly on the cursor's current location. */
+function samePosition(t: Thread, here: { filePath: string; line: number } | undefined): boolean {
+  return (
+    here != null &&
+    t.anchor != null &&
+    t.anchor.filePath === here.filePath &&
+    t.anchor.start.line === here.line
+  );
+}
+
+/** Collapse a comment body to a single line for list labels. */
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 /** Human-readable confirmation shown after a vote is recorded. */

@@ -103,6 +103,11 @@ export class ReviewService {
     return this.active?.threads.filter((t) => t.anchor?.filePath === path) ?? [];
   }
 
+  /** All comment threads on the open PR (for navigation/search). */
+  get threads(): Thread[] {
+    return this.active?.threads ?? [];
+  }
+
   /** Create a comment and return the new ADO thread id (for anchor snapshots). */
   async createComment(
     filePath: string,

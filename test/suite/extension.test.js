@@ -30,6 +30,12 @@ describe('ReviewLens activation (M0)', () => {
       'reviewlens.prevFile',
       'reviewlens.nextChange',
       'reviewlens.prevChange',
+      'reviewlens.nextComment',
+      'reviewlens.prevComment',
+      'reviewlens.nextUnresolvedComment',
+      'reviewlens.prevUnresolvedComment',
+      'reviewlens.searchComments',
+      'reviewlens.openCommentsPanel',
     ]) {
       assert.ok(commands.includes(id), `missing command: ${id}`);
     }

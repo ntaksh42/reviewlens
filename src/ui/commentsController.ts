@@ -79,7 +79,11 @@ export class CommentsController {
    * comment that drifted across PR iterations lands back on its original line
    * (and is flagged when it had to move) instead of the stale stored line.
    */
-  async renderForFile(filePath: string, rightUri: vscode.Uri): Promise<void> {
+  async renderForFile(
+    filePath: string,
+    rightUri: vscode.Uri,
+    expandThreadId?: number
+  ): Promise<void> {
     this.clear(rightUri);
     const prId = this.review.currentPrId;
     const doc = await this.tryOpen(rightUri);
@@ -98,7 +102,10 @@ export class CommentsController {
         t.comments.map(toComment)
       ) as TrackedThread;
       vsThread.label = `ReviewLens · ${t.status}${driftLabel(drift)}`;
-      vsThread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+      vsThread.collapsibleState =
+        threadId != null && threadId === expandThreadId
+          ? vscode.CommentThreadCollapsibleState.Expanded
+          : vscode.CommentThreadCollapsibleState.Collapsed;
       vsThread.contextValue = t.status === 'closed' ? 'resolved' : 'open';
       vsThread.adoThreadId = threadId;
       created.push(vsThread);
