@@ -19,34 +19,37 @@ describe('ReviewLens activation (M0)', () => {
     for (const id of [
       'reviewlens.signIn',
       'reviewlens.signOut',
-      'reviewlens.refreshPrs',
-      'reviewlens.openPr',
       'reviewlens.openFileDiff',
       'reviewlens.toggleViewed',
       'reviewlens.createOrReply',
       'reviewlens.resolveThread',
       'reviewlens.castVote',
-      'reviewlens.analyzeImpact',
+      'reviewlens.attachToBranchPr',
+      'reviewlens.openInBrowser',
       'reviewlens.nextFile',
       'reviewlens.prevFile',
       'reviewlens.nextChange',
       'reviewlens.prevChange',
+      'reviewlens.nextComment',
+      'reviewlens.prevComment',
+      'reviewlens.nextUnresolvedComment',
+      'reviewlens.prevUnresolvedComment',
+      'reviewlens.searchComments',
+      'reviewlens.openCommentsPanel',
     ]) {
       assert.ok(commands.includes(id), `missing command: ${id}`);
     }
   });
 
-  it('contributes the PR, Changed Files and Impact views', () => {
+  it('contributes only the Changed Files view', () => {
     const ext = vscode.extensions.getExtension(EXT_ID);
     const views = ext.packageJSON.contributes.views.reviewlens;
     const ids = views.map((v) => v.id);
-    assert.ok(ids.includes('reviewlens.prList'), 'prList view missing');
-    assert.ok(ids.includes('reviewlens.changedFiles'), 'changedFiles view missing');
-    assert.ok(ids.includes('reviewlens.impact'), 'impact view missing');
+    assert.deepStrictEqual(ids, ['reviewlens.changedFiles']);
   });
 
-  it('runs refresh with no configuration without throwing', async () => {
+  it('attaches to the branch PR with no configuration without throwing', async () => {
     // Not configured in the test host -> should surface a hint, not throw.
-    await vscode.commands.executeCommand('reviewlens.refreshPrs');
+    await vscode.commands.executeCommand('reviewlens.attachToBranchPr');
   });
 });

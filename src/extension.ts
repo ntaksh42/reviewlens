@@ -1,73 +1,37 @@
 import * as vscode from 'vscode';
 import { AuthProvider } from './infra/ado/authProvider';
-import { PullRequestService } from './app/pullRequestService';
 import { ReviewService } from './app/reviewService';
-import { PrListTreeProvider } from './ui/prListTreeProvider';
 import { ChangedFilesTreeProvider } from './ui/changedFilesTreeProvider';
 import { DiffContentProvider, DIFF_SCHEME, sideUri, headUri } from './ui/diffContentProvider';
 import { CommentsController } from './ui/commentsController';
-import { ImpactTreeProvider } from './ui/impactTreeProvider';
 import { NavigationCursor } from './ui/navigationCursor';
 import { ViewedStore } from './infra/state/viewedStore';
 import { AnchorStore } from './infra/state/anchorStore';
-import { analyzeImpact } from './infra/lsp/impactAnalyzer';
-import {
-  resolveLocalRepo,
-  ensureWorktree,
-  pruneWorktrees,
-  Worktree,
-} from './infra/git/worktree';
-import { getLocalRepoPath, getLocalWorktreeLimit } from './infra/config';
-import { ChangedFile, PullRequestSummary } from './domain/models';
+import { getCurrentBranch, repoRoot } from './infra/git/repo';
+import { getAutoAttachBranchPr } from './infra/config';
+import { ChangedFile, PullRequestSummary, Thread } from './domain/models';
 import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
-import * as path from 'path';
 
 export function activate(context: vscode.ExtensionContext): void {
   const log = createLogger();
   const auth = new AuthProvider(context.secrets);
-  const prService = new PullRequestService(auth);
   const reviewService = new ReviewService(auth);
   const viewedStore = new ViewedStore(context.workspaceState);
   const anchorStore = new AnchorStore(context.workspaceState);
 
-  const prList = new PrListTreeProvider(prService);
   const changedFiles = new ChangedFilesTreeProvider();
   const diffProvider = new DiffContentProvider();
   const comments = new CommentsController(reviewService, anchorStore);
-  const impact = new ImpactTreeProvider();
   const cursor = new NavigationCursor();
   const changedFilesView = vscode.window.createTreeView('reviewlens.changedFiles', {
     treeDataProvider: changedFiles,
   });
 
-  // Local (worktree) review state. Undefined unless the user opted in for the
-  // currently open PR.
-  let activeWorktree: Worktree | undefined;
-
-  const cacheRoot = (): string =>
-    path.join(context.globalStorageUri.fsPath, 'worktrees');
-
-  function teardownLocal(): void {
-    const wt = activeWorktree;
-    activeWorktree = undefined;
-    reviewService.setLocalPath(undefined);
-    void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', false);
-    if (!wt) {
-      return;
-    }
-    // Drop the worktree folder from the workspace (never index 0, so no reload).
-    // The worktree itself is left on disk for reuse; pruneWorktrees bounds growth.
-    const folders = vscode.workspace.workspaceFolders ?? [];
-    const idx = folders.findIndex((f) => f.uri.fsPath === wt.worktreePath);
-    if (idx > 0) {
-      vscode.workspace.updateWorkspaceFolders(idx, 1);
-    }
-  }
-
-  /** Tear down all review UI — used after a PR leaves the active list. */
+  /** Tear down all review UI — used when the open PR is completed/abandoned. */
   function closeReview(): void {
-    teardownLocal();
+    reviewService.setLocalPath(undefined);
+    attachedBranchKey = undefined;
     diffProvider.clear();
     comments.clearAll();
     changedFiles.setFiles([], new Set());
@@ -76,62 +40,269 @@ export function activate(context: vscode.ExtensionContext): void {
     void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', false);
   }
 
+  // Live "branch attach" review: the open workspace is the PR's branch, so its
+  // working-tree files are the head side and PR comments render inline on them
+  // (no worktree checkout). `attachedBranchKey` is `${repoRoot}#${branch}`, so a
+  // branch switch is detected and re-attached.
+  let attachedBranchKey: string | undefined;
+  // Branch key the auto path last *tried* (attached or not), so a branch with no
+  // PR isn't re-queried on every editor switch. Reset on branch change.
+  let autoTriedKey: string | undefined;
+
+  /** Locate the workspace git repo that matches the configured ADO repo + its branch. */
+  async function resolveOpenBranchRepo(): Promise<
+    { repoRoot: string; branch: string } | undefined
+  > {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    for (const f of folders) {
+      // Resolve the git toplevel, not the workspace folder, so it matches the
+      // repo-relative paths of changed files even when a subfolder is open;
+      // otherwise the head file can't be found on disk and comments don't anchor.
+      const root = await repoRoot(f.uri.fsPath);
+      const branch = root ? await getCurrentBranch(root) : undefined;
+      if (root && branch) {
+        return { repoRoot: root, branch };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Find the active PR for the open branch and show its comments inline on the
+   * working-tree files. `silent` suppresses "no PR" / error popups so the
+   * automatic path stays quiet.
+   */
+  async function attachToBranchPr(silent: boolean): Promise<void> {
+    const open = await resolveOpenBranchRepo();
+    if (!open) {
+      if (!silent) {
+        vscode.window.showWarningMessage('ReviewLens: open a git repository folder first.');
+      }
+      return;
+    }
+    const key = `${open.repoRoot}#${open.branch}`;
+    let pr: PullRequestSummary | undefined;
+    try {
+      pr = await reviewService.findByBranch(open.branch);
+    } catch (e) {
+      if (!silent) {
+        vscode.window.showErrorMessage(
+          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+      return;
+    }
+    if (!pr) {
+      if (!silent) {
+        vscode.window.showInformationMessage(
+          `ReviewLens: no active pull request for branch "${open.branch}".`
+        );
+      }
+      return;
+    }
+    try {
+      diffProvider.clear();
+      comments.clearAll();
+      const data = await vscode.window.withProgress(
+        { location: { viewId: 'reviewlens.changedFiles' } },
+        () => reviewService.open(pr!)
+      );
+      // The open working tree is the head side: point review at it so comments
+      // render on the real files and commenting targets them.
+      reviewService.setLocalPath(open.repoRoot);
+      changedFiles.setFiles(data.files, viewedStore.get(pr.id));
+      changedFilesView.description = `#${pr.id} ${pr.title}`;
+      cursor.setFiles(data.files);
+      attachedBranchKey = key;
+      void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
+      // Render comments on the file already open, if it's one of the PR's files.
+      await renderActiveEditor();
+      if (!silent) {
+        vscode.window.showInformationMessage(
+          `ReviewLens: showing comments for PR #${pr.id} on branch "${open.branch}".`
+        );
+      }
+    } catch (e) {
+      if (!silent) {
+        vscode.window.showErrorMessage(
+          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+  }
+
+  /** Auto-attach when enabled and the open branch changed since the last attempt. */
+  async function maybeAutoAttach(): Promise<void> {
+    if (!getAutoAttachBranchPr()) {
+      return;
+    }
+    const open = await resolveOpenBranchRepo();
+    if (!open) {
+      return;
+    }
+    const key = `${open.repoRoot}#${open.branch}`;
+    // Already attached to this branch, or already tried it and found no PR:
+    // don't re-query ADO on every editor switch. A branch switch changes `key`.
+    if (key === attachedBranchKey || key === autoTriedKey) {
+      return;
+    }
+    autoTriedKey = key;
+    await attachToBranchPr(true);
+  }
+
+  /**
+   * In live branch-attach mode, render the open PR's comments onto the active
+   * editor when it's one of the PR's changed files (a real working-tree file).
+   */
+  async function renderActiveEditor(): Promise<void> {
+    if (!attachedBranchKey) {
+      return;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+    const filePath = comments.headDocumentPath(editor.document.uri);
+    if (filePath) {
+      await comments.renderForFile(filePath, editor.document.uri);
+    }
+  }
+
+  /** Anchored threads sorted by file then line, the order navigation walks. */
+  function sortedAnchoredThreads(unresolvedOnly = false): Thread[] {
+    return reviewService.threads
+      .filter((t) => t.anchor && (!unresolvedOnly || t.status !== 'closed'))
+      .sort((a, b) => {
+        const fa = a.anchor!.filePath;
+        const fb = b.anchor!.filePath;
+        return fa === fb ? a.anchor!.start.line - b.anchor!.start.line : fa.localeCompare(fb);
+      });
+  }
+
+  /** (filePath, line) of the active head-side editor's cursor, for "next from here". */
+  function currentLocation(): { filePath: string; line: number } | undefined {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return undefined;
+    }
+    const filePath = comments.headDocumentPath(editor.document.uri);
+    return filePath ? { filePath, line: editor.selection.active.line + 1 } : undefined;
+  }
+
+  /** Open the thread's file, move the cursor to its anchor line, and show it. */
+  async function revealThread(thread: Thread): Promise<void> {
+    const anchor = thread.anchor;
+    const prId = reviewService.currentPrId;
+    if (!anchor || prId == null) {
+      return;
+    }
+    const uri = headUri(prId, anchor.filePath, reviewService.localPath);
+    const line = Math.max(0, anchor.start.line - 1);
+    const editor = await vscode.window.showTextDocument(uri);
+    const pos = new vscode.Position(line, 0);
+    editor.selection = new vscode.Selection(pos, pos);
+    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+    // Render with the jumped-to thread expanded, matching a Comments-panel click.
+    await comments.renderForFile(
+      anchor.filePath,
+      uri,
+      thread.id != null ? Number(thread.id) : undefined
+    );
+  }
+
+  /** Jump to the next/prev (optionally unresolved) comment, wrapping at the ends. */
+  async function jumpComment(dir: 'next' | 'prev', unresolvedOnly: boolean): Promise<void> {
+    const list = sortedAnchoredThreads(unresolvedOnly);
+    if (list.length === 0) {
+      vscode.window.showInformationMessage(
+        unresolvedOnly
+          ? 'ReviewLens: no unresolved comments.'
+          : 'ReviewLens: no comments on this pull request.'
+      );
+      return;
+    }
+    const here = currentLocation();
+    const isAfter = (t: Thread): boolean => {
+      if (!here) {
+        return true;
+      }
+      const a = t.anchor!;
+      return (
+        a.filePath > here.filePath ||
+        (a.filePath === here.filePath && a.start.line > here.line)
+      );
+    };
+    let target: Thread;
+    if (dir === 'next') {
+      target = list.find(isAfter) ?? list[0];
+    } else {
+      const before = list.filter((t) => !isAfter(t) && !samePosition(t, here));
+      target = before[before.length - 1] ?? list[list.length - 1];
+    }
+    await revealThread(target);
+  }
+
+  /** True when a base↔head diff for `filePath` is already open in some tab. */
+  function diffTabOpen(filePath: string): boolean {
+    const wantLeft = sideUri(reviewService.currentPrId ?? 0, 'left', filePath).toString();
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input;
+        if (input instanceof vscode.TabInputTextDiff && input.original.toString() === wantLeft) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * In branch-attach mode, when the user opens a plain working-tree file that the
+   * PR changed, replace it with a base↔head diff (head = the real file, so it
+   * stays editable and shows comments). Files the PR did not touch are left as-is
+   * for free browsing. Skips when the file's diff is already open, so opening the
+   * diff doesn't re-trigger itself.
+   */
+  async function maybeAutoDiff(editor: vscode.TextEditor | undefined): Promise<boolean> {
+    if (!attachedBranchKey || !editor) {
+      return false;
+    }
+    const uri = editor.document.uri;
+    // Only act on a plain working-tree file (the diff's left side is our virtual
+    // scheme, so a diff editor won't match here and we won't recurse).
+    if (uri.scheme !== 'file') {
+      return false;
+    }
+    const filePath = comments.headDocumentPath(uri);
+    if (!filePath || diffTabOpen(filePath)) {
+      return false;
+    }
+    const file = reviewService.changedFile(filePath);
+    if (!file) {
+      return false;
+    }
+    // openFileDiff renders the comments on the head pane itself.
+    await vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+    return true;
+  }
+
   context.subscriptions.push(
     changedFilesView,
     comments,
-    vscode.window.registerTreeDataProvider('reviewlens.prList', prList),
-    vscode.window.registerTreeDataProvider('reviewlens.impact', impact),
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider),
-
-    vscode.commands.registerCommand('reviewlens.refreshPrs', () => prList.refresh()),
-
-    vscode.commands.registerCommand('reviewlens.filterPrs', async () => {
-      const value = await vscode.window.showInputBox({
-        prompt: 'Filter pull requests (title, author, repository, project, branch)',
-        placeHolder: 'e.g. bugfix, alice, my-repo',
-        value: prList.filterText,
-      });
-      if (value !== undefined) {
-        prList.setFilter(value);
-      }
-    }),
-
-    vscode.commands.registerCommand('reviewlens.clearFilter', () => prList.setFilter('')),
 
     vscode.commands.registerCommand('reviewlens.signIn', async () => {
       const pat = await auth.promptAndStore();
       if (pat) {
         vscode.window.showInformationMessage('ReviewLens: PAT saved.');
-        await prList.refresh();
+        await maybeAutoAttach();
       }
     }),
 
     vscode.commands.registerCommand('reviewlens.signOut', async () => {
-      teardownLocal();
+      closeReview();
       await auth.clear();
       vscode.window.showInformationMessage('ReviewLens: signed out.');
-      await prList.refresh();
-    }),
-
-    vscode.commands.registerCommand('reviewlens.openPr', async (pr: PullRequestSummary) => {
-      try {
-        teardownLocal();
-        diffProvider.clear();
-        comments.clearAll();
-        const data = await vscode.window.withProgress(
-          { location: { viewId: 'reviewlens.changedFiles' } },
-          () => reviewService.open(pr)
-        );
-        changedFiles.setFiles(data.files, viewedStore.get(pr.id));
-        changedFilesView.description = `#${pr.id} ${pr.title}`;
-        cursor.setFiles(data.files);
-        void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
-      } catch (e) {
-        changedFiles.setFiles([], new Set());
-        vscode.window.showErrorMessage(
-          `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
     }),
 
     vscode.commands.registerCommand(
@@ -146,74 +317,26 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     ),
 
-    vscode.commands.registerCommand('reviewlens.reviewLocally', async () => {
-      const current = reviewService.current;
-      if (!current) {
-        vscode.window.showWarningMessage('ReviewLens: open a pull request first.');
+    // Keybinding-friendly viewed toggle: acts on the file the cursor points at.
+    vscode.commands.registerCommand('reviewlens.toggleViewedCurrent', async () => {
+      const pr = reviewService.current?.pr;
+      const file = cursor.current();
+      if (!pr || !file) {
         return;
       }
-      const headSha = current.data.headCommit;
-      if (!headSha) {
-        vscode.window.showErrorMessage('ReviewLens: the PR head commit is unknown.');
-        return;
-      }
-      const folders = vscode.workspace.workspaceFolders ?? [];
-      if (folders.length === 0) {
-        vscode.window.showWarningMessage(
-          'ReviewLens: open a folder or workspace before starting local review.'
-        );
-        return;
-      }
-      try {
-        await vscode.window.withProgress(
-          { location: { viewId: 'reviewlens.changedFiles' }, title: 'Checking out PR locally…' },
-          async () => {
-            const candidates = folders.map((f) => f.uri.fsPath);
-            const repo = await resolveLocalRepo(
-              current.pr.remoteUrl,
-              candidates,
-              getLocalRepoPath()
-            );
-            if (!repo) {
-              throw new Error(
-                'no local clone found — open the repo as a folder or set reviewlens.localRepoPath.'
-              );
-            }
-            const wt = await ensureWorktree(repo, headSha, cacheRoot());
-            activeWorktree = wt;
-            reviewService.setLocalPath(wt.worktreePath);
-            // Bound the cache: drop the least-recently-used worktrees, keeping
-            // the one we just materialized.
-            await pruneWorktrees(cacheRoot(), getLocalWorktreeLimit(), [wt.worktreePath]);
-            // Append the worktree as a workspace folder so the language server
-            // indexes the PR's head version (cross-file nav, references, grep).
-            const existing = (vscode.workspace.workspaceFolders ?? []).some(
-              (f) => f.uri.fsPath === wt.worktreePath
-            );
-            if (!existing) {
-              vscode.workspace.updateWorkspaceFolders(
-                vscode.workspace.workspaceFolders?.length ?? 0,
-                0,
-                { uri: vscode.Uri.file(wt.worktreePath), name: `PR #${current.pr.id} (head)` }
-              );
-            }
-          }
-        );
-        void vscode.commands.executeCommand('setContext', 'reviewlens.localActive', true);
-        vscode.window.showInformationMessage(
-          'ReviewLens: local review on. Reopen a file to navigate its neighbors.'
-        );
-      } catch (e) {
-        teardownLocal();
-        vscode.window.showErrorMessage(
-          `ReviewLens: local review failed — ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
+      const nowViewed = await viewedStore.toggle(pr.id, file.path);
+      changedFiles.setViewed(file.path, nowViewed);
     }),
 
-    vscode.commands.registerCommand('reviewlens.stopLocalReview', async () => {
-      teardownLocal();
-      vscode.window.showInformationMessage('ReviewLens: local review off.');
+    // Open the active PR in the browser. A keybinding passes nothing, so use
+    // the PR currently attached to the open branch.
+    vscode.commands.registerCommand('reviewlens.openInBrowser', async () => {
+      const target = reviewService.current?.pr;
+      if (!target?.url) {
+        vscode.window.showWarningMessage('ReviewLens: no pull request to open.');
+        return;
+      }
+      await vscode.env.openExternal(vscode.Uri.parse(target.url));
     }),
 
     vscode.commands.registerCommand('reviewlens.openFileDiff', async (file: ChangedFile) => {
@@ -243,9 +366,11 @@ export function activate(context: vscode.ExtensionContext): void {
         right,
         `${name} (base ↔ head) — PR #${prId}`
       );
-      if (realHead) {
-        // The head pane is a real, writable file; editing it would drift comment
-        // anchors and dirty the worktree, so mark it read-only for the session.
+      // In worktree review the head pane is a throwaway checkout, so editing it
+      // would only drift comment anchors / dirty the worktree — keep it
+      // read-only. In branch-attach mode the head pane is the user's own working
+      // tree, which they are expected to keep editing, so leave it writable.
+      if (realHead && !attachedBranchKey) {
         // Best-effort: the command is absent on older VS Code.
         try {
           await vscode.commands.executeCommand(
@@ -336,51 +461,12 @@ export function activate(context: vscode.ExtensionContext): void {
           }.`
         );
         closeReview();
-        await prList.refresh();
       } catch (e) {
         vscode.window.showErrorMessage(
           `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }),
-
-    vscode.commands.registerCommand('reviewlens.analyzeImpact', async () => {
-      // When local review is on, analyze the PR's head worktree against its real
-      // base commit; otherwise fall back to the open folder + configured baseRef.
-      const local = reviewService.localPath;
-      const baseSha = reviewService.current?.data.baseCommit;
-      const analysisRoot = local ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!analysisRoot) {
-        impact.setMessage('Open the repository folder to analyze impact.');
-        return;
-      }
-      const baseRef =
-        local && baseSha
-          ? baseSha
-          : vscode.workspace.getConfiguration('reviewlens').get<string>('baseRef', 'main');
-      await vscode.window.withProgress(
-        { location: { viewId: 'reviewlens.impact' } },
-        async () => {
-          try {
-            const roots = await analyzeImpact(analysisRoot, baseRef);
-            impact.setResults(roots);
-          } catch (e) {
-            impact.setMessage(`Impact analysis failed: ${e instanceof Error ? e.message : e}`);
-          }
-        }
-      );
-    }),
-
-    vscode.commands.registerCommand(
-      'reviewlens.openImpactLocation',
-      async (filePath: string, line: number) => {
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
-        const editor = await vscode.window.showTextDocument(doc);
-        const pos = new vscode.Position(line, 0);
-        editor.selection = new vscode.Selection(pos, pos);
-        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-      }
-    ),
 
     vscode.commands.registerCommand('reviewlens.nextFile', () => {
       const file = cursor.next();
@@ -402,11 +488,111 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('reviewlens.prevChange', () =>
       vscode.commands.executeCommand('workbench.action.compareEditor.previousChange')
-    )
+    ),
+
+    vscode.commands.registerCommand('reviewlens.attachToBranchPr', () =>
+      attachToBranchPr(false)
+    ),
+
+    vscode.commands.registerCommand('reviewlens.nextComment', () =>
+      jumpComment('next', false)
+    ),
+    vscode.commands.registerCommand('reviewlens.prevComment', () =>
+      jumpComment('prev', false)
+    ),
+    vscode.commands.registerCommand('reviewlens.nextUnresolvedComment', () =>
+      jumpComment('next', true)
+    ),
+    vscode.commands.registerCommand('reviewlens.prevUnresolvedComment', () =>
+      jumpComment('prev', true)
+    ),
+
+    vscode.commands.registerCommand('reviewlens.searchComments', async () => {
+      const anchored = sortedAnchoredThreads();
+      if (anchored.length === 0) {
+        vscode.window.showInformationMessage('ReviewLens: no comments on this pull request.');
+        return;
+      }
+      interface CommentItem extends vscode.QuickPickItem {
+        thread: Thread;
+      }
+      const items: CommentItem[] = anchored.map((t) => {
+        const first = t.comments[0];
+        const replies = t.comments.length - 1;
+        return {
+          label: first ? `${first.author}: ${oneLine(first.content)}` : '(empty)',
+          description: `${t.anchor!.filePath}:${t.anchor!.start.line}`,
+          detail:
+            (t.status !== 'closed' ? '$(comment) open' : '$(check) resolved') +
+            (replies > 0 ? ` · ${replies} repl${replies === 1 ? 'y' : 'ies'}` : ''),
+          thread: t,
+        };
+      });
+      const picked = await vscode.window.showQuickPick(items, {
+        title: 'ReviewLens — search comments',
+        placeHolder: 'Filter by author, text, file, or line',
+        matchOnDescription: true,
+        matchOnDetail: true,
+      });
+      if (picked) {
+        await revealThread(picked.thread);
+      }
+    }),
+
+    vscode.commands.registerCommand('reviewlens.openCommentsPanel', () =>
+      vscode.commands.executeCommand('workbench.action.focusCommentsPanel')
+    ),
+
+    // Track whether the active editor is a head-side review doc, so the
+    // "add comment" key (Ctrl+[) only overrides outdent on those documents.
+    // In live branch-attach mode, also pick up a branch switch, auto-open a
+    // diff for changed files, and render the PR's comments onto the file.
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      void vscode.commands.executeCommand(
+        'setContext',
+        'reviewlens.headEditor',
+        editor ? comments.isHeadDocument(editor.document.uri) : false
+      );
+      void (async () => {
+        await maybeAutoAttach();
+        // A changed file auto-opens as a diff that also renders its comments; for
+        // everything else (unchanged files, or a diff already open) render onto
+        // the editor as-is.
+        if (!(await maybeAutoDiff(editor))) {
+          await renderActiveEditor();
+        }
+      })();
+    }),
+
+    // A folder added/removed (e.g. opening the repo) can change the open branch.
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void maybeAutoAttach();
+    })
   );
 
-  void prList.refresh();
+  const active = vscode.window.activeTextEditor;
+  void vscode.commands.executeCommand(
+    'setContext',
+    'reviewlens.headEditor',
+    active ? comments.isHeadDocument(active.document.uri) : false
+  );
+  void maybeAutoAttach();
   log.info('ReviewLens activated.');
+}
+
+/** True when a thread sits exactly on the cursor's current location. */
+function samePosition(t: Thread, here: { filePath: string; line: number } | undefined): boolean {
+  return (
+    here != null &&
+    t.anchor != null &&
+    t.anchor.filePath === here.filePath &&
+    t.anchor.start.line === here.line
+  );
+}
+
+/** Collapse a comment body to a single line for list labels. */
+function oneLine(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 /** Human-readable confirmation shown after a vote is recorded. */

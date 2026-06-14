@@ -8,6 +8,10 @@
     "vscode": "^1.90.0"
   },
   "main": "./dist/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ntaksh42/reviewlens.git"
+  },
   "activationEvents": [],
   "contributes": {
     "viewsContainers": {
@@ -22,16 +26,8 @@
     "views": {
       "reviewlens": [
         {
-          "id": "reviewlens.prList",
-          "name": "Pull Requests"
-        },
-        {
           "id": "reviewlens.changedFiles",
           "name": "Changed Files"
-        },
-        {
-          "id": "reviewlens.impact",
-          "name": "Impact"
         }
       ]
     },
@@ -45,28 +41,13 @@
         "title": "ReviewLens: Sign out"
       },
       {
-        "command": "reviewlens.refreshPrs",
-        "title": "ReviewLens: Refresh Pull Requests",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "reviewlens.filterPrs",
-        "title": "ReviewLens: Filter Pull Requests",
-        "icon": "$(filter)"
-      },
-      {
-        "command": "reviewlens.clearFilter",
-        "title": "ReviewLens: Clear Pull Request Filter",
-        "icon": "$(filter-filled)"
-      },
-      {
         "command": "reviewlens.toggleViewed",
         "title": "ReviewLens: Toggle viewed",
         "icon": "$(check)"
       },
       {
         "command": "reviewlens.createOrReply",
-        "title": "ReviewLens: Comment"
+        "title": "Reply"
       },
       {
         "command": "reviewlens.addComment",
@@ -83,19 +64,18 @@
         "icon": "$(thumbsup)"
       },
       {
-        "command": "reviewlens.analyzeImpact",
-        "title": "ReviewLens: Analyze Impact",
-        "icon": "$(search)"
+        "command": "reviewlens.attachToBranchPr",
+        "title": "ReviewLens: Show PR comments for current branch",
+        "icon": "$(comment-discussion)"
       },
       {
-        "command": "reviewlens.reviewLocally",
-        "title": "ReviewLens: Review locally (checkout PR)",
-        "icon": "$(repo-clone)"
+        "command": "reviewlens.openInBrowser",
+        "title": "ReviewLens: Open pull request in browser",
+        "icon": "$(globe)"
       },
       {
-        "command": "reviewlens.stopLocalReview",
-        "title": "ReviewLens: Stop local review",
-        "icon": "$(repo)"
+        "command": "reviewlens.toggleViewedCurrent",
+        "title": "ReviewLens: Toggle viewed (current file)"
       },
       {
         "command": "reviewlens.nextFile",
@@ -112,44 +92,55 @@
       {
         "command": "reviewlens.prevChange",
         "title": "ReviewLens: Previous change"
+      },
+      {
+        "command": "reviewlens.nextComment",
+        "title": "ReviewLens: Next comment"
+      },
+      {
+        "command": "reviewlens.prevComment",
+        "title": "ReviewLens: Previous comment"
+      },
+      {
+        "command": "reviewlens.nextUnresolvedComment",
+        "title": "ReviewLens: Next unresolved comment"
+      },
+      {
+        "command": "reviewlens.prevUnresolvedComment",
+        "title": "ReviewLens: Previous unresolved comment"
+      },
+      {
+        "command": "reviewlens.searchComments",
+        "title": "ReviewLens: Search comments",
+        "icon": "$(search)"
+      },
+      {
+        "command": "reviewlens.openCommentsPanel",
+        "title": "ReviewLens: Open comments panel",
+        "icon": "$(comment-discussion)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "reviewlens.filterPrs",
-          "when": "view == reviewlens.prList && !reviewlens.prFilterActive",
+          "command": "reviewlens.attachToBranchPr",
+          "when": "view == reviewlens.changedFiles",
+          "group": "navigation@0"
+        },
+        {
+          "command": "reviewlens.searchComments",
+          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
           "group": "navigation@1"
         },
         {
-          "command": "reviewlens.clearFilter",
-          "when": "view == reviewlens.prList && reviewlens.prFilterActive",
-          "group": "navigation@1"
-        },
-        {
-          "command": "reviewlens.refreshPrs",
-          "when": "view == reviewlens.prList",
+          "command": "reviewlens.openCommentsPanel",
+          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
           "group": "navigation@2"
-        },
-        {
-          "command": "reviewlens.analyzeImpact",
-          "when": "view == reviewlens.impact",
-          "group": "navigation"
         },
         {
           "command": "reviewlens.castVote",
           "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
-          "group": "navigation@0"
-        },
-        {
-          "command": "reviewlens.reviewLocally",
-          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive && !reviewlens.localActive",
-          "group": "navigation@1"
-        },
-        {
-          "command": "reviewlens.stopLocalReview",
-          "when": "view == reviewlens.changedFiles && reviewlens.localActive",
-          "group": "navigation@1"
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -159,10 +150,15 @@
           "group": "inline"
         }
       ],
+      "commandPalette": [
+        {
+          "command": "reviewlens.createOrReply",
+          "when": "false"
+        }
+      ],
       "comments/commentThread/context": [
         {
           "command": "reviewlens.createOrReply",
-          "group": "inline",
           "when": "commentController == reviewlens"
         }
       ],
@@ -187,25 +183,71 @@
       },
       {
         "command": "reviewlens.nextChange",
-        "key": "alt+down",
+        "key": "f8",
         "when": "reviewlens.reviewActive && textInputFocus"
       },
       {
         "command": "reviewlens.prevChange",
-        "key": "alt+up",
+        "key": "shift+f8",
         "when": "reviewlens.reviewActive && textInputFocus"
       },
       {
         "command": "reviewlens.addComment",
-        "key": "ctrl+;",
-        "mac": "cmd+;",
-        "when": "reviewlens.reviewActive && editorTextFocus && resourceScheme == reviewlens"
+        "key": "ctrl+[",
+        "mac": "cmd+[",
+        "when": "reviewlens.headEditor && editorTextFocus"
       },
       {
-        "command": "reviewlens.createOrReply",
-        "key": "ctrl+enter",
-        "mac": "cmd+enter",
-        "when": "commentEditorFocused && commentController == reviewlens"
+        "command": "reviewlens.nextComment",
+        "key": "alt+]",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.prevComment",
+        "key": "alt+[",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.nextUnresolvedComment",
+        "key": "ctrl+alt+]",
+        "mac": "cmd+alt+]",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.prevUnresolvedComment",
+        "key": "ctrl+alt+[",
+        "mac": "cmd+alt+[",
+        "when": "reviewlens.reviewActive && editorTextFocus"
+      },
+      {
+        "command": "reviewlens.searchComments",
+        "key": "ctrl+k f",
+        "mac": "cmd+k f",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.openCommentsPanel",
+        "key": "ctrl+k c",
+        "mac": "cmd+k c",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.castVote",
+        "key": "ctrl+k v",
+        "mac": "cmd+k v",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.toggleViewedCurrent",
+        "key": "ctrl+k enter",
+        "mac": "cmd+k enter",
+        "when": "reviewlens.reviewActive"
+      },
+      {
+        "command": "reviewlens.openInBrowser",
+        "key": "ctrl+k b",
+        "mac": "cmd+k b",
+        "when": "reviewlens.reviewActive"
       }
     ],
     "configuration": {
@@ -224,23 +266,12 @@
         "reviewlens.repository": {
           "type": "string",
           "default": "",
-          "description": "Optional: repository name to filter PRs. Empty = all repos in the project."
+          "description": "Optional: repository name to match the active pull request. Empty = all repos in the project."
         },
-        "reviewlens.baseRef": {
-          "type": "string",
-          "default": "main",
-          "description": "Base ref for impact analysis on the open repository (git diff <baseRef>...HEAD)."
-        },
-        "reviewlens.localRepoPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional: absolute path to a local clone of the repository, used for local (worktree) review. Empty = auto-detect from open workspace folders by matching the repo's remote URL."
-        },
-        "reviewlens.localWorktreeLimit": {
-          "type": "number",
-          "default": 5,
-          "minimum": 0,
-          "description": "How many cached local-review worktrees to keep before the least-recently-used ones are pruned from the extension's storage."
+        "reviewlens.autoAttachBranchPr": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically find the active pull request for the open workspace branch and show its review comments inline on the working-tree files. Disable to attach only via the \"Show PR comments for current branch\" command."
         }
       }
     }
@@ -249,6 +280,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "node esbuild.js --production",
+    "package": "vsce package",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build",
     "test": "node test/runTest.js"
@@ -257,6 +289,7 @@
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.90.0",
     "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.1",
     "glob": "^13.0.6",
     "mocha": "^11.7.6",

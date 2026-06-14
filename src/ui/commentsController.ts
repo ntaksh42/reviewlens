@@ -29,6 +29,9 @@ export class CommentsController {
     private readonly anchors: AnchorStore
   ) {
     this.controller = vscode.comments.createCommentController('reviewlens', 'ReviewLens');
+    this.controller.options = {
+      placeHolder: 'Reply...',
+    };
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: (document) => {
         if (!this.headPath(document.uri)) {
@@ -56,6 +59,16 @@ export class CommentsController {
     return filePath;
   }
 
+  /** True when a document is a head-side review doc we accept comments on. */
+  isHeadDocument(uri: vscode.Uri): boolean {
+    return this.headPath(uri) !== undefined;
+  }
+
+  /** Repo-relative path of a head-side review doc, or undefined if not one. */
+  headDocumentPath(uri: vscode.Uri): string | undefined {
+    return this.headPath(uri);
+  }
+
   dispose(): void {
     this.controller.dispose();
   }
@@ -66,7 +79,11 @@ export class CommentsController {
    * comment that drifted across PR iterations lands back on its original line
    * (and is flagged when it had to move) instead of the stale stored line.
    */
-  async renderForFile(filePath: string, rightUri: vscode.Uri): Promise<void> {
+  async renderForFile(
+    filePath: string,
+    rightUri: vscode.Uri,
+    expandThreadId?: number
+  ): Promise<void> {
     this.clear(rightUri);
     const prId = this.review.currentPrId;
     const doc = await this.tryOpen(rightUri);
@@ -85,8 +102,10 @@ export class CommentsController {
         t.comments.map(toComment)
       ) as TrackedThread;
       vsThread.label = `ReviewLens · ${t.status}${driftLabel(drift)}`;
-      vsThread.canReply = true;
-      vsThread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
+      vsThread.collapsibleState =
+        threadId != null && threadId === expandThreadId
+          ? vscode.CommentThreadCollapsibleState.Expanded
+          : vscode.CommentThreadCollapsibleState.Collapsed;
       vsThread.contextValue = t.status === 'closed' ? 'resolved' : 'open';
       vsThread.adoThreadId = threadId;
       created.push(vsThread);

@@ -17,6 +17,11 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
   default; turn local review on from the Changed Files toolbar
   (**Review locally**). Comments and **Impact analysis** retarget to the
   checkout automatically.
+- **Branch attach** — when the open workspace is checked out on a PR's source
+  branch, ReviewLens finds that PR automatically and shows its comments inline on
+  your **working-tree files** (no diff editor needed). Trigger manually with
+  **ReviewLens: Show PR comments for current branch** (also on the Pull Requests
+  toolbar), or turn the automatic behavior off via `reviewlens.autoAttachBranchPr`.
 - **Comments** — ADO comment threads render inline on the head side; create,
   reply, and resolve, all round-tripping to ADO. Commenting is allowed on every
   line, so unchanged context can be annotated too. Start a comment on the
@@ -45,6 +50,15 @@ npm test           # @vscode/test-electron activation test
 
 Press `F5` (Run ReviewLens) to launch the Extension Development Host.
 
+## Package & install (VSIX)
+
+```bash
+npm run package    # produces reviewlens-<version>.vsix
+code --install-extension reviewlens-0.0.1.vsix
+```
+
+Or in VS Code: **Extensions** view → **⋯** menu → **Install from VSIX…**.
+
 ## Configure
 
 In Settings of the host window:
@@ -52,6 +66,8 @@ In Settings of the host window:
 - `reviewlens.project` — project name
 - `reviewlens.repository` — optional, to filter to one repo
 - `reviewlens.baseRef` — base ref for impact analysis (default `main`)
+- `reviewlens.autoAttachBranchPr` — auto-find the active PR for the open branch
+  and show its comments inline on the working-tree files (default `true`)
 - `reviewlens.localRepoPath` — optional, absolute path to a local clone for
   local review. Empty = auto-detect from open workspace folders by matching the
   repo's remote URL.
@@ -67,7 +83,7 @@ in SecretStorage.
 |---|---|
 | Next / previous changed file | `shift+alt+]` / `shift+alt+[` |
 | Next / previous change in diff | `alt+down` / `alt+up` |
-| Add comment on current line | `ctrl+;` (`cmd+;` on macOS) |
+| Add comment on current line | `ctrl+[` (`cmd+[` on macOS) |
 | Submit comment | `ctrl+enter` (`cmd+enter` on macOS) |
 
 ## Layout

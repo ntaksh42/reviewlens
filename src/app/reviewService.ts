@@ -32,6 +32,12 @@ export class ReviewService {
     return this.active?.pr.id;
   }
 
+  /** Active PR whose source branch is `branch`, for inline review of the open branch. */
+  async findByBranch(branch: string): Promise<PullRequestSummary | undefined> {
+    const client = await createAdoClient(this.auth);
+    return client.findActivePrBySourceBranch(branch);
+  }
+
   async open(pr: PullRequestSummary): Promise<ReviewData> {
     const client = await createAdoClient(this.auth);
     // The review (files + commits) and the comment threads are independent
@@ -67,6 +73,12 @@ export class ReviewService {
     return this.active?.changedPaths.has(path.toLowerCase()) ?? false;
   }
 
+  /** The changed-file entry for a repo-relative path, if the PR touched it. */
+  changedFile(path: string): ChangedFile | undefined {
+    const want = path.toLowerCase();
+    return this.active?.data.files.find((f) => f.path.toLowerCase() === want);
+  }
+
   async fileContent(side: Side, file: ChangedFile): Promise<string> {
     if (!this.active) {
       return '';
@@ -89,6 +101,11 @@ export class ReviewService {
 
   threadsForFile(path: string): Thread[] {
     return this.active?.threads.filter((t) => t.anchor?.filePath === path) ?? [];
+  }
+
+  /** All comment threads on the open PR (for navigation/search). */
+  get threads(): Thread[] {
+    return this.active?.threads ?? [];
   }
 
   /** Create a comment and return the new ADO thread id (for anchor snapshots). */
