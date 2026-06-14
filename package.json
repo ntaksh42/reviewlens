@@ -44,6 +44,11 @@
         "command": "reviewlens.refreshPrs",
         "title": "ReviewLens: Refresh Pull Requests",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "reviewlens.toggleViewed",
+        "title": "ReviewLens: Toggle viewed",
+        "icon": "$(check)"
       }
     ],
     "menus": {
@@ -52,6 +57,13 @@
           "command": "reviewlens.refreshPrs",
           "when": "view == reviewlens.prList",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "reviewlens.toggleViewed",
+          "when": "view == reviewlens.changedFiles && viewItem == changedFile",
+          "group": "inline"
         }
       ]
     },

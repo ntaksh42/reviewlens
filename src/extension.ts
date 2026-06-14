@@ -5,6 +5,7 @@ import { ReviewService } from './app/reviewService';
 import { PrListTreeProvider } from './ui/prListTreeProvider';
 import { ChangedFilesTreeProvider } from './ui/changedFilesTreeProvider';
 import { DiffContentProvider, DIFF_SCHEME, sideUri } from './ui/diffContentProvider';
+import { ViewedStore } from './infra/state/viewedStore';
 import { ChangedFile, PullRequestSummary } from './domain/models';
 import { createLogger } from './common/logger';
 
@@ -13,6 +14,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const auth = new AuthProvider(context.secrets);
   const prService = new PullRequestService(auth);
   const reviewService = new ReviewService(auth);
+  const viewedStore = new ViewedStore(context.workspaceState);
 
   const prList = new PrListTreeProvider(prService);
   const changedFiles = new ChangedFilesTreeProvider();
@@ -49,15 +51,27 @@ export function activate(context: vscode.ExtensionContext): void {
           { location: { viewId: 'reviewlens.changedFiles' } },
           () => reviewService.open(pr)
         );
-        changedFiles.setFiles(data.files);
+        changedFiles.setFiles(data.files, viewedStore.get(pr.id));
         changedFilesView.description = `#${pr.id} ${pr.title}`;
       } catch (e) {
-        changedFiles.setFiles([]);
+        changedFiles.setFiles([], new Set());
         vscode.window.showErrorMessage(
           `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
         );
       }
     }),
+
+    vscode.commands.registerCommand(
+      'reviewlens.toggleViewed',
+      async (node: { file: ChangedFile }) => {
+        const pr = reviewService.current?.pr;
+        if (!pr || !node?.file) {
+          return;
+        }
+        const nowViewed = await viewedStore.toggle(pr.id, node.file.path);
+        changedFiles.setViewed(node.file.path, nowViewed);
+      }
+    ),
 
     vscode.commands.registerCommand('reviewlens.openFileDiff', async (file: ChangedFile) => {
       const current = reviewService.current;

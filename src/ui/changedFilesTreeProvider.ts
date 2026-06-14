@@ -3,11 +3,12 @@ import { ChangedFile } from '../domain/models';
 import { FileStatus } from '../domain/types';
 
 class FileNode extends vscode.TreeItem {
-  constructor(public readonly file: ChangedFile) {
+  constructor(public readonly file: ChangedFile, viewed: boolean) {
     super(basename(file.path), vscode.TreeItemCollapsibleState.None);
-    this.description = `${statusLabel(file.status)} · ${dirname(file.path)}`;
+    this.description = `${viewed ? '✓ ' : ''}${statusLabel(file.status)} · ${dirname(file.path)}`;
     this.tooltip = file.path;
-    this.iconPath = statusIcon(file.status);
+    this.contextValue = 'changedFile';
+    this.iconPath = viewed ? new vscode.ThemeIcon('check') : statusIcon(file.status);
     this.command = {
       command: 'reviewlens.openFileDiff',
       title: 'Open diff',
@@ -28,9 +29,20 @@ export class ChangedFilesTreeProvider implements vscode.TreeDataProvider<vscode.
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private files: ChangedFile[] = [];
+  private viewed = new Set<string>();
 
-  setFiles(files: ChangedFile[]): void {
+  setFiles(files: ChangedFile[], viewed: Set<string>): void {
     this.files = files;
+    this.viewed = viewed;
+    this._onDidChangeTreeData.fire();
+  }
+
+  setViewed(path: string, isViewed: boolean): void {
+    if (isViewed) {
+      this.viewed.add(path);
+    } else {
+      this.viewed.delete(path);
+    }
     this._onDidChangeTreeData.fire();
   }
 
@@ -42,7 +54,7 @@ export class ChangedFilesTreeProvider implements vscode.TreeDataProvider<vscode.
     if (this.files.length === 0) {
       return [new HintNode('Open a pull request to see changed files.')];
     }
-    return this.files.map((f) => new FileNode(f));
+    return this.files.map((f) => new FileNode(f, this.viewed.has(f.path)));
   }
 }
 
