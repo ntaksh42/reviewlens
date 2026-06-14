@@ -8,6 +8,10 @@
     "vscode": "^1.90.0"
   },
   "main": "./dist/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ntaksh42/reviewlens.git"
+  },
   "activationEvents": [],
   "contributes": {
     "viewsContainers": {
@@ -322,6 +326,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "vscode:prepublish": "node esbuild.js --production",
+    "package": "vsce package",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build",
     "test": "node test/runTest.js"
@@ -330,6 +335,7 @@
     "@types/node": "^20.14.0",
     "@types/vscode": "^1.90.0",
     "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.1",
     "glob": "^13.0.6",
     "mocha": "^11.7.6",
