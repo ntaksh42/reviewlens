@@ -11,6 +11,10 @@ interface ActiveReview {
   threads: Thread[];
   /** File text keyed by `${commit}:${path}`. Content at a commit is immutable. */
   contentCache: Map<string, Promise<string>>;
+  /** Absolute path of the local worktree at head, when local review is enabled. */
+  localPath?: string;
+  /** Lowercased changed-file paths, for gating comments on the local checkout. */
+  changedPaths: Set<string>;
 }
 
 /** Holds the PR currently under review and serves its files + comment threads. */
@@ -31,8 +35,31 @@ export class ReviewService {
       client.getReview(pr.id, pr.repositoryId),
       client.getThreads(pr.id, pr.repositoryId),
     ]);
-    this.active = { pr, client, data, threads, contentCache: new Map() };
+    this.active = {
+      pr,
+      client,
+      data,
+      threads,
+      contentCache: new Map(),
+      changedPaths: new Set(data.files.map((f) => f.path.toLowerCase())),
+    };
     return data;
+  }
+
+  /** Absolute path of the local worktree at head, when local review is on. */
+  get localPath(): string | undefined {
+    return this.active?.localPath;
+  }
+
+  setLocalPath(path: string | undefined): void {
+    if (this.active) {
+      this.active.localPath = path;
+    }
+  }
+
+  /** Whether a repo-relative path is one of the PR's changed files. */
+  isChangedFile(path: string): boolean {
+    return this.active?.changedPaths.has(path.toLowerCase()) ?? false;
   }
 
   async fileContent(side: Side, file: ChangedFile): Promise<string> {

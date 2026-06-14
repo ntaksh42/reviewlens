@@ -65,6 +65,8 @@ export interface PullRequestSummary {
   project: string;
   repository: string;
   repositoryId: string;
+  /** Clone URL of the repo, used to match the PR to a local checkout. */
+  remoteUrl: string;
   sourceBranch: string;
   targetBranch: string;
   url: string;
