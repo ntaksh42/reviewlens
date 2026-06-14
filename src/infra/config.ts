@@ -27,3 +27,12 @@ export function isConfigured(config: AdoConfig): boolean {
 export function getAutoAttachBranchPr(): boolean {
   return vscode.workspace.getConfiguration('reviewlens').get<boolean>('autoAttachBranchPr', true);
 }
+
+/**
+ * How often (seconds) to re-fetch the open PR's comment threads from ADO so new
+ * comments by others appear without a manual refresh. 0 disables polling.
+ */
+export function getSyncInterval(): number {
+  const raw = vscode.workspace.getConfiguration('reviewlens').get<number>('syncInterval', 30);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}

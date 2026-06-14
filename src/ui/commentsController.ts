@@ -3,6 +3,7 @@ import { ReviewService } from '../app/reviewService';
 import { CommentTarget } from '../infra/ado/adoClient';
 import { AnchorStore, normalizeAnchorText } from '../infra/state/anchorStore';
 import { Comment as DomainComment } from '../domain/models';
+import { extractSuggestion } from '../domain/suggestion';
 import { headDocPath } from './diffContentProvider';
 
 interface TrackedThread extends vscode.CommentThread {
@@ -106,7 +107,10 @@ export class CommentsController {
         threadId != null && threadId === expandThreadId
           ? vscode.CommentThreadCollapsibleState.Expanded
           : vscode.CommentThreadCollapsibleState.Collapsed;
-      vsThread.contextValue = t.status === 'closed' ? 'resolved' : 'open';
+      // A "suggestion" context value lets the thread title offer "Apply".
+      const hasSuggestion = extractSuggestion(t.comments[0]?.content) != null;
+      vsThread.contextValue =
+        (t.status === 'closed' ? 'resolved' : 'open') + (hasSuggestion ? '.suggestion' : '');
       vsThread.adoThreadId = threadId;
       created.push(vsThread);
 
@@ -183,6 +187,106 @@ export class CommentsController {
         `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+  }
+
+  /**
+   * Start a suggestion on the active head-side editor's selection: pre-fill a
+   * ```suggestion block with the selected text (the lines to replace) and post it
+   * as a thread anchored to that span, so the PR author can apply it in ADO.
+   */
+  async addSuggestionAtCursor(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+    const filePath = this.headPath(editor.document.uri);
+    if (!filePath) {
+      return;
+    }
+    const sel = editor.selection;
+    const startLine = sel.start.line;
+    // An empty selection suggests a replacement for just the cursor's line.
+    const endLine = sel.isEmpty || sel.end.character > 0 ? sel.end.line : sel.end.line - 1;
+    const range = new vscode.Range(startLine, 0, endLine, editor.document.lineAt(endLine).text.length);
+    const original = editor.document.getText(range);
+
+    const note = await vscode.window.showInputBox({
+      title: 'ReviewLens — suggest a change',
+      prompt: 'Edit the suggested replacement for the selected lines.',
+      value: original,
+      // A multi-line suggestion is common; keep the box from closing on Enter is
+      // not available, so users edit a single logical block here.
+    });
+    if (note === undefined) {
+      return;
+    }
+    const body = '```suggestion\n' + note + '\n```';
+    const target: CommentTarget = {
+      startLine: startLine + 1,
+      startOffset: 1,
+      endLine: endLine + 1,
+      endOffset: editor.document.lineAt(endLine).text.length + 1,
+    };
+    try {
+      const newId = await this.review.createComment(filePath, target, body);
+      if (newId != null) {
+        await this.snapshotLine(editor.document.uri, filePath, newId, startLine);
+      }
+      await this.renderForFile(filePath, editor.document.uri);
+    } catch (e) {
+      vscode.window.showErrorMessage(
+        `ReviewLens: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  /**
+   * Apply a ```suggestion block from a thread's first comment onto the head-side
+   * working-tree file, replacing the thread's anchored line range. Only works in
+   * branch-attach mode where the head document is the real editable file.
+   */
+  async applySuggestion(thread: vscode.CommentThread): Promise<void> {
+    const t = thread as TrackedThread;
+    const filePath = this.headPath(thread.uri);
+    if (!filePath || thread.uri.scheme !== 'file') {
+      vscode.window.showWarningMessage(
+        'ReviewLens: suggestions can only be applied to the working-tree file (branch-attach mode).'
+      );
+      return;
+    }
+    const domainThread = this.review.threads.find(
+      (d) => d.id != null && t.adoThreadId != null && Number(d.id) === t.adoThreadId
+    );
+    const suggestion = domainThread && extractSuggestion(domainThread.comments[0]?.content);
+    if (suggestion == null) {
+      vscode.window.showWarningMessage('ReviewLens: this comment has no suggestion block.');
+      return;
+    }
+    const anchor = domainThread!.anchor;
+    if (!anchor) {
+      return;
+    }
+    const doc = await this.tryOpen(thread.uri);
+    if (!doc) {
+      return;
+    }
+    const startLine = Math.max(0, anchor.start.line - 1);
+    const endLine = Math.min(doc.lineCount - 1, Math.max(startLine, anchor.end.line - 1));
+    const range = new vscode.Range(
+      startLine,
+      0,
+      endLine,
+      doc.lineAt(endLine).text.length
+    );
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(thread.uri, range, suggestion);
+    const ok = await vscode.workspace.applyEdit(edit);
+    if (!ok) {
+      vscode.window.showErrorMessage('ReviewLens: could not apply the suggestion.');
+      return;
+    }
+    await vscode.window.showTextDocument(doc);
+    vscode.window.showInformationMessage('ReviewLens: suggestion applied.');
   }
 
   async resolve(thread: vscode.CommentThread): Promise<void> {

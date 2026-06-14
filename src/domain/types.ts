@@ -24,3 +24,11 @@ export type PrVote =
   | 'waitForAuthor'
   | 'reject'
   | 'reset';
+
+/** A reviewer's current standing vote, as read back from ADO. */
+export type ReviewerVote =
+  | 'approved'
+  | 'approvedWithSuggestions'
+  | 'none'
+  | 'waiting'
+  | 'rejected';

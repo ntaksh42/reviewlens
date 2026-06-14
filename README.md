@@ -75,7 +75,8 @@ In Settings of the host window:
   pruning the least-recently-used (default `5`).
 
 Run **ReviewLens: Sign in (PAT)** (scope: Code Read & Write); the PAT is stored
-in SecretStorage.
+in SecretStorage. To show **linked work item titles** in the PR overview, also
+grant **Work Items (Read)** — without it, linked work items still appear by id.
 
 ## Keybindings (when a review is active)
 

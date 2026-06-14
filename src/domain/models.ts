@@ -1,6 +1,6 @@
 // Domain model (SPEC §8). Pure data shapes — no vscode/ADO imports.
 
-import { FileStatus, FileOrder, Side, ThreadStatus } from './types';
+import { FileStatus, FileOrder, ReviewerVote, Side, ThreadStatus } from './types';
 
 export interface LineRange {
   startLine: number;
@@ -57,6 +57,23 @@ export interface ReviewProgress {
   lastSeenIterationId?: number;
 }
 
+/** A reviewer assigned to a PR, with their current vote. */
+export interface Reviewer {
+  displayName: string;
+  /** ADO vote: approved / approvedWithSuggestions / none / waiting / rejected. */
+  vote: ReviewerVote;
+  /** Required reviewer (e.g. mandated by branch policy) vs optional. */
+  isRequired: boolean;
+}
+
+/** A work item linked to a PR. */
+export interface WorkItemRef {
+  id: number;
+  title: string;
+  /** Web URL of the work item, for opening in the browser. */
+  url: string;
+}
+
 /** Lightweight PR row for the list view (M0). */
 export interface PullRequestSummary {
   id: number;
@@ -70,6 +87,13 @@ export interface PullRequestSummary {
   sourceBranch: string;
   targetBranch: string;
   url: string;
+}
+
+/** The open PR's metadata for the overview section of the tree. */
+export interface PullRequestOverview {
+  description: string;
+  reviewers: Reviewer[];
+  workItems: WorkItemRef[];
 }
 
 /** Data needed to review a PR's diffs (M1a). */

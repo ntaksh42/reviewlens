@@ -8,7 +8,7 @@ import { NavigationCursor } from './ui/navigationCursor';
 import { ViewedStore } from './infra/state/viewedStore';
 import { AnchorStore } from './infra/state/anchorStore';
 import { getCurrentBranch, repoRoot } from './infra/git/repo';
-import { getAutoAttachBranchPr } from './infra/config';
+import { getAutoAttachBranchPr, getSyncInterval } from './infra/config';
 import { ChangedFile, PullRequestSummary, Thread } from './domain/models';
 import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
@@ -28,13 +28,52 @@ export function activate(context: vscode.ExtensionContext): void {
     treeDataProvider: changedFiles,
   });
 
+  // Background poll that re-fetches the open PR's threads so comments by others
+  // appear without a manual refresh. Runs only while a PR is attached.
+  let syncTimer: ReturnType<typeof setInterval> | undefined;
+
+  function stopSync(): void {
+    if (syncTimer) {
+      clearInterval(syncTimer);
+      syncTimer = undefined;
+    }
+  }
+
+  /** (Re)start the sync poll for the attached PR, honoring the configured interval. */
+  function startSync(): void {
+    stopSync();
+    const seconds = getSyncInterval();
+    if (seconds <= 0) {
+      return;
+    }
+    syncTimer = setInterval(() => {
+      void (async () => {
+        // Stop quietly if the review was torn down between ticks.
+        if (!attachedBranchKey || !reviewService.current) {
+          stopSync();
+          return;
+        }
+        try {
+          const changed = await reviewService.syncThreads();
+          if (changed) {
+            await renderActiveEditor();
+          }
+        } catch {
+          // Transient ADO errors shouldn't kill the poll; the next tick retries.
+        }
+      })();
+    }, seconds * 1000);
+  }
+
   /** Tear down all review UI — used when the open PR is completed/abandoned. */
   function closeReview(): void {
+    stopSync();
     reviewService.setLocalPath(undefined);
     attachedBranchKey = undefined;
     diffProvider.clear();
     comments.clearAll();
     changedFiles.setFiles([], new Set());
+    changedFiles.setOverview(undefined, undefined);
     changedFilesView.description = undefined;
     cursor.setFiles([]);
     void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', false);
@@ -111,10 +150,12 @@ export function activate(context: vscode.ExtensionContext): void {
       // render on the real files and commenting targets them.
       reviewService.setLocalPath(open.repoRoot);
       changedFiles.setFiles(data.files, viewedStore.get(pr.id));
+      changedFiles.setOverview(pr, reviewService.overview);
       changedFilesView.description = `#${pr.id} ${pr.title}`;
       cursor.setFiles(data.files);
       attachedBranchKey = key;
       void vscode.commands.executeCommand('setContext', 'reviewlens.reviewActive', true);
+      startSync();
       // Render comments on the file already open, if it's one of the PR's files.
       await renderActiveEditor();
       if (!silent) {
@@ -289,6 +330,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     changedFilesView,
     comments,
+    { dispose: stopSync },
     vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider),
 
     vscode.commands.registerCommand('reviewlens.signIn', async () => {
@@ -391,6 +433,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('reviewlens.resolveThread', (thread: vscode.CommentThread) =>
       comments.resolve(thread)
+    ),
+
+    vscode.commands.registerCommand('reviewlens.addSuggestion', () =>
+      comments.addSuggestionAtCursor()
+    ),
+
+    vscode.commands.registerCommand('reviewlens.applySuggestion', (thread: vscode.CommentThread) =>
+      comments.applySuggestion(thread)
     ),
 
     vscode.commands.registerCommand('reviewlens.castVote', async () => {

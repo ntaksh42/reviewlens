@@ -7,12 +7,21 @@ import {
   GitPullRequestCommentThread,
   GitPullRequestSearchCriteria,
   GitVersionType,
+  IdentityRefWithVote,
   PullRequestStatus,
   VersionControlChangeType,
 } from 'azure-devops-node-api/interfaces/GitInterfaces';
 import { AdoConfig } from '../config';
-import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../../domain/models';
-import { FileStatus, PrVote, ThreadStatus } from '../../domain/types';
+import {
+  ChangedFile,
+  PullRequestOverview,
+  PullRequestSummary,
+  Reviewer,
+  ReviewData,
+  Thread,
+  WorkItemRef,
+} from '../../domain/models';
+import { FileStatus, PrVote, ReviewerVote, ThreadStatus } from '../../domain/types';
 
 /** Character span (1-based line + column) for anchoring a comment. */
 export interface CommentTarget {
@@ -85,6 +94,47 @@ export class AdoClient {
       targetBranch: shortBranch(pr.targetRefName),
       url: webUrl(this.config, pr.repository?.name, pr.pullRequestId),
     };
+  }
+
+  /**
+   * The open PR's description, reviewers (with votes), and linked work items,
+   * for the overview section of the changed-files tree. Work item titles are a
+   * separate API; if that lookup fails the refs still render with their ids.
+   */
+  async getOverview(prId: number, repositoryId: string): Promise<PullRequestOverview> {
+    const git = await this.git();
+    const pr = await git.getPullRequestById(prId, this.config.project);
+    const reviewers = (pr.reviewers ?? []).map(mapReviewer);
+    const workItems = await this.getWorkItems(prId, repositoryId);
+    return {
+      description: pr.description ?? '',
+      reviewers,
+      workItems,
+    };
+  }
+
+  /** Work items linked to the PR, resolving their titles in one batch call. */
+  private async getWorkItems(prId: number, repositoryId: string): Promise<WorkItemRef[]> {
+    const git = await this.git();
+    const refs = await git.getPullRequestWorkItemRefs(repositoryId, prId, this.config.project);
+    const ids = (refs ?? [])
+      .map((r) => Number(r.id))
+      .filter((id) => Number.isFinite(id));
+    if (ids.length === 0) {
+      return [];
+    }
+    try {
+      const wit = await this.connection.getWorkItemTrackingApi();
+      const items = await wit.getWorkItems(ids, ['System.Title'], undefined, undefined, undefined, this.config.project);
+      return (items ?? []).map((w) => ({
+        id: w.id ?? 0,
+        title: (w.fields?.['System.Title'] as string) ?? `Work item ${w.id}`,
+        url: workItemWebUrl(this.config, w.id),
+      }));
+    } catch {
+      // Title lookup needs vso.work scope; fall back to id-only refs.
+      return ids.map((id) => ({ id, title: `Work item ${id}`, url: workItemWebUrl(this.config, id) }));
+    }
   }
 
   /** Changed files + base/head commits for the latest PR iteration (M1a). */
@@ -349,6 +399,30 @@ function toAdoStatus(s: ThreadStatus): CommentThreadStatus {
   }
 }
 
+function mapReviewer(r: IdentityRefWithVote): Reviewer {
+  return {
+    displayName: r.displayName ?? 'unknown',
+    vote: mapReviewerVote(r.vote),
+    isRequired: r.isRequired ?? false,
+  };
+}
+
+/** ADO encodes a reviewer's standing vote as 10 / 5 / 0 / -5 / -10. */
+function mapReviewerVote(vote?: number): ReviewerVote {
+  switch (vote) {
+    case 10:
+      return 'approved';
+    case 5:
+      return 'approvedWithSuggestions';
+    case -5:
+      return 'waiting';
+    case -10:
+      return 'rejected';
+    default:
+      return 'none';
+  }
+}
+
 function mapStatus(ct?: VersionControlChangeType): FileStatus {
   const v = ct ?? 0;
   if (v & VersionControlChangeType.Delete) {
@@ -382,4 +456,11 @@ function webUrl(cfg: AdoConfig, repo?: string, prId?: number): string {
   return `${cfg.orgUrl}/${encodeURIComponent(cfg.project)}/_git/${encodeURIComponent(
     repo
   )}/pullrequest/${prId}`;
+}
+
+function workItemWebUrl(cfg: AdoConfig, id?: number): string {
+  if (!id) {
+    return '';
+  }
+  return `${cfg.orgUrl}/${encodeURIComponent(cfg.project)}/_workitems/edit/${id}`;
 }

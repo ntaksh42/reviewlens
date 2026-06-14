@@ -1,13 +1,21 @@
 import { AuthProvider } from '../infra/ado/authProvider';
 import { AdoClient, CommentTarget } from '../infra/ado/adoClient';
 import { createAdoClient } from '../infra/ado/clientFactory';
-import { ChangedFile, PullRequestSummary, ReviewData, Thread } from '../domain/models';
+import {
+  ChangedFile,
+  PullRequestOverview,
+  PullRequestSummary,
+  ReviewData,
+  Thread,
+} from '../domain/models';
 import { PrVote, Side } from '../domain/types';
+import { threadsSignature } from '../domain/suggestion';
 
 interface ActiveReview {
   pr: PullRequestSummary;
   client: AdoClient;
   data: ReviewData;
+  overview: PullRequestOverview;
   threads: Thread[];
   /** File text keyed by `${commit}:${path}`. Content at a commit is immutable. */
   contentCache: Map<string, Promise<string>>;
@@ -40,21 +48,29 @@ export class ReviewService {
 
   async open(pr: PullRequestSummary): Promise<ReviewData> {
     const client = await createAdoClient(this.auth);
-    // The review (files + commits) and the comment threads are independent
-    // fetches; run them concurrently instead of one after the other.
-    const [data, threads] = await Promise.all([
+    // The review (files + commits), the overview (description/reviewers/work
+    // items), and the comment threads are independent fetches; run them
+    // concurrently instead of one after the other.
+    const [data, overview, threads] = await Promise.all([
       client.getReview(pr.id, pr.repositoryId),
+      client.getOverview(pr.id, pr.repositoryId),
       client.getThreads(pr.id, pr.repositoryId),
     ]);
     this.active = {
       pr,
       client,
       data,
+      overview,
       threads,
       contentCache: new Map(),
       changedPaths: new Set(data.files.map((f) => f.path.toLowerCase())),
     };
     return data;
+  }
+
+  /** The open PR's overview (description, reviewers, work items). */
+  get overview(): PullRequestOverview | undefined {
+    return this.active?.overview;
   }
 
   /** Absolute path of the local worktree at head, when local review is on. */
@@ -169,6 +185,17 @@ export class ReviewService {
     }
     const { client, pr, data } = this.active;
     await client.abandonPullRequest(pr.id, data.repositoryId);
+  }
+
+  /**
+   * Re-fetch the open PR's threads from ADO (used by both mutating operations
+   * and the background sync). Returns whether the threads changed since the last
+   * fetch, so callers can skip a re-render when nothing moved.
+   */
+  async syncThreads(): Promise<boolean> {
+    const before = threadsSignature(this.threads);
+    await this.refreshThreads();
+    return threadsSignature(this.threads) !== before;
   }
 
   private async refreshThreads(): Promise<void> {

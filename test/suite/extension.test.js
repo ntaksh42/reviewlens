@@ -36,6 +36,8 @@ describe('ReviewLens activation (M0)', () => {
       'reviewlens.prevUnresolvedComment',
       'reviewlens.searchComments',
       'reviewlens.openCommentsPanel',
+      'reviewlens.addSuggestion',
+      'reviewlens.applySuggestion',
     ]) {
       assert.ok(commands.includes(id), `missing command: ${id}`);
     }
