@@ -67,6 +67,12 @@ export class ReviewService {
     return this.active?.changedPaths.has(path.toLowerCase()) ?? false;
   }
 
+  /** The changed-file entry for a repo-relative path, if the PR touched it. */
+  changedFile(path: string): ChangedFile | undefined {
+    const want = path.toLowerCase();
+    return this.active?.data.files.find((f) => f.path.toLowerCase() === want);
+  }
+
   async fileContent(side: Side, file: ChangedFile): Promise<string> {
     if (!this.active) {
       return '';

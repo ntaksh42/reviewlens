@@ -222,6 +222,50 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  /** True when a base↔head diff for `filePath` is already open in some tab. */
+  function diffTabOpen(filePath: string): boolean {
+    const wantLeft = sideUri(reviewService.currentPrId ?? 0, 'left', filePath).toString();
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input;
+        if (input instanceof vscode.TabInputTextDiff && input.original.toString() === wantLeft) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * In branch-attach mode, when the user opens a plain working-tree file that the
+   * PR changed, replace it with a base↔head diff (head = the real file, so it
+   * stays editable and shows comments). Files the PR did not touch are left as-is
+   * for free browsing. Skips when the file's diff is already open, so opening the
+   * diff doesn't re-trigger itself.
+   */
+  async function maybeAutoDiff(editor: vscode.TextEditor | undefined): Promise<boolean> {
+    if (!attachedBranchKey || !editor) {
+      return false;
+    }
+    const uri = editor.document.uri;
+    // Only act on a plain working-tree file (the diff's left side is our virtual
+    // scheme, so a diff editor won't match here and we won't recurse).
+    if (uri.scheme !== 'file') {
+      return false;
+    }
+    const filePath = comments.headDocumentPath(uri);
+    if (!filePath || diffTabOpen(filePath)) {
+      return false;
+    }
+    const file = reviewService.changedFile(filePath);
+    if (!file) {
+      return false;
+    }
+    // openFileDiff renders the comments on the head pane itself.
+    await vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+    return true;
+  }
+
   context.subscriptions.push(
     changedFilesView,
     comments,
@@ -475,9 +519,11 @@ export function activate(context: vscode.ExtensionContext): void {
         right,
         `${name} (base ↔ head) — PR #${prId}`
       );
-      if (realHead) {
-        // The head pane is a real, writable file; editing it would drift comment
-        // anchors and dirty the worktree, so mark it read-only for the session.
+      // In worktree review the head pane is a throwaway checkout, so editing it
+      // would only drift comment anchors / dirty the worktree — keep it
+      // read-only. In branch-attach mode the head pane is the user's own working
+      // tree, which they are expected to keep editing, so leave it writable.
+      if (realHead && !attachedBranchKey) {
         // Best-effort: the command is absent on older VS Code.
         try {
           await vscode.commands.executeCommand(
@@ -642,16 +688,23 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Track whether the active editor is a head-side review doc, so the
     // "add comment" key (Ctrl+[) only overrides outdent on those documents.
-    // In live branch-attach mode, also (re)render the PR's comments onto the
-    // file being opened, and pick up a branch switch.
+    // In live branch-attach mode, also pick up a branch switch, auto-open a
+    // diff for changed files, and render the PR's comments onto the file.
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       void vscode.commands.executeCommand(
         'setContext',
         'reviewlens.headEditor',
         editor ? comments.isHeadDocument(editor.document.uri) : false
       );
-      void maybeAutoAttach();
-      void renderActiveEditor();
+      void (async () => {
+        await maybeAutoAttach();
+        // A changed file auto-opens as a diff that also renders its comments; for
+        // everything else (unchanged files, or a diff already open) render onto
+        // the editor as-is.
+        if (!(await maybeAutoDiff(editor))) {
+          await renderActiveEditor();
+        }
+      })();
     }),
 
     // A folder added/removed (e.g. opening the repo) can change the open branch.
