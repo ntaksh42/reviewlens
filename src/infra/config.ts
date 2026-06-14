@@ -19,3 +19,15 @@ export function getAdoConfig(): AdoConfig {
 export function isConfigured(config: AdoConfig): boolean {
   return Boolean(config.orgUrl && config.project);
 }
+
+/** Optional explicit path to a local clone, used for local (worktree) review. */
+export function getLocalRepoPath(): string | undefined {
+  const p = (vscode.workspace.getConfiguration('reviewlens').get<string>('localRepoPath') ?? '').trim();
+  return p || undefined;
+}
+
+/** How many cached local-review worktrees to keep before pruning the oldest. */
+export function getLocalWorktreeLimit(): number {
+  const n = vscode.workspace.getConfiguration('reviewlens').get<number>('localWorktreeLimit', 5);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 5;
+}
