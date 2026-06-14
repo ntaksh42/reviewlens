@@ -78,6 +78,11 @@
         "icon": "$(check)"
       },
       {
+        "command": "reviewlens.castVote",
+        "title": "ReviewLens: Vote / complete pull request…",
+        "icon": "$(thumbsup)"
+      },
+      {
         "command": "reviewlens.analyzeImpact",
         "title": "ReviewLens: Analyze Impact",
         "icon": "$(search)"
@@ -130,6 +135,11 @@
           "command": "reviewlens.analyzeImpact",
           "when": "view == reviewlens.impact",
           "group": "navigation"
+        },
+        {
+          "command": "reviewlens.castVote",
+          "when": "view == reviewlens.changedFiles && reviewlens.reviewActive",
+          "group": "navigation@0"
         },
         {
           "command": "reviewlens.reviewLocally",

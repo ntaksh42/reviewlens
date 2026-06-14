@@ -25,6 +25,7 @@ describe('ReviewLens activation (M0)', () => {
       'reviewlens.toggleViewed',
       'reviewlens.createOrReply',
       'reviewlens.resolveThread',
+      'reviewlens.castVote',
       'reviewlens.analyzeImpact',
       'reviewlens.nextFile',
       'reviewlens.prevFile',
