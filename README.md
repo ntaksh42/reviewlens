@@ -83,7 +83,8 @@ grant **Work Items (Read)** — without it, linked work items still appear by id
 | Action | Key |
 |---|---|
 | Next / previous changed file | `shift+alt+]` / `shift+alt+[` |
-| Next / previous change in diff | `alt+down` / `alt+up` |
+| Next / previous change in diff | `ctrl+alt+down` / `ctrl+alt+up` |
+| Next / previous comment | `ctrl+alt+right` / `ctrl+alt+left` |
 | Add comment on current line | `ctrl+[` (`cmd+[` on macOS) |
 | Submit comment | `ctrl+enter` (`cmd+enter` on macOS) |
 

@@ -549,13 +549,37 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    vscode.commands.registerCommand('reviewlens.nextChange', () =>
-      vscode.commands.executeCommand('workbench.action.compareEditor.nextChange')
-    ),
+    // Step to the next change in the open diff. compareEditor.nextChange wraps to
+    // the top at the last change, so detect "didn't move forward" (same line or it
+    // jumped backward) and roll over to the next file's first change instead.
+    vscode.commands.registerCommand('reviewlens.nextChange', async () => {
+      const before = vscode.window.activeTextEditor?.selection.active.line;
+      await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
+      const after = vscode.window.activeTextEditor?.selection.active.line;
+      if (before != null && after != null && after <= before) {
+        const file = cursor.next();
+        if (file) {
+          await vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+        }
+      }
+    }),
 
-    vscode.commands.registerCommand('reviewlens.prevChange', () =>
-      vscode.commands.executeCommand('workbench.action.compareEditor.previousChange')
-    ),
+    // Mirror of nextChange: when stepping back didn't move backward (wrapped to the
+    // bottom or stayed put), open the previous file and land on its last change.
+    vscode.commands.registerCommand('reviewlens.prevChange', async () => {
+      const before = vscode.window.activeTextEditor?.selection.active.line;
+      await vscode.commands.executeCommand('workbench.action.compareEditor.previousChange');
+      const after = vscode.window.activeTextEditor?.selection.active.line;
+      if (before != null && after != null && after >= before) {
+        const file = cursor.prev();
+        if (file) {
+          await vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+          // Land on the file's last change: jump the cursor to the end, then step back.
+          await vscode.commands.executeCommand('cursorBottom');
+          await vscode.commands.executeCommand('workbench.action.compareEditor.previousChange');
+        }
+      }
+    }),
 
     vscode.commands.registerCommand('reviewlens.attachToBranchPr', () =>
       attachToBranchPr(false)

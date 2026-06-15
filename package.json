@@ -216,13 +216,13 @@
       },
       {
         "command": "reviewlens.nextChange",
-        "key": "f8",
-        "when": "reviewlens.reviewActive && textInputFocus"
+        "key": "ctrl+alt+down",
+        "when": "reviewlens.reviewActive"
       },
       {
         "command": "reviewlens.prevChange",
-        "key": "shift+f8",
-        "when": "reviewlens.reviewActive && textInputFocus"
+        "key": "ctrl+alt+up",
+        "when": "reviewlens.reviewActive"
       },
       {
         "command": "reviewlens.addComment",
@@ -232,13 +232,13 @@
       },
       {
         "command": "reviewlens.nextComment",
-        "key": "alt+]",
-        "when": "reviewlens.reviewActive && editorTextFocus"
+        "key": "ctrl+alt+right",
+        "when": "reviewlens.reviewActive"
       },
       {
         "command": "reviewlens.prevComment",
-        "key": "alt+[",
-        "when": "reviewlens.reviewActive && editorTextFocus"
+        "key": "ctrl+alt+left",
+        "when": "reviewlens.reviewActive"
       },
       {
         "command": "reviewlens.nextUnresolvedComment",
