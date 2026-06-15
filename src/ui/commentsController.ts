@@ -21,9 +21,24 @@ const REANCHOR_WINDOW = 200;
  * head (right) side of the diff; commenting is allowed on every line so that
  * unchanged context can be annotated too (FR-09).
  */
+/** A suggestion being drafted in a scratch editor, awaiting submit. */
+interface PendingSuggestion {
+  /** Repo-relative path of the head file the suggestion targets. */
+  filePath: string;
+  /** Head-side document URI the comment will be anchored on. */
+  targetUri: vscode.Uri;
+  /** Line span (1-based) the suggestion replaces. */
+  target: CommentTarget;
+  /** URI of the scratch editor holding the draft text. */
+  scratchUri: vscode.Uri;
+}
+
 export class CommentsController {
   private readonly controller: vscode.CommentController;
   private readonly byUri = new Map<string, vscode.CommentThread[]>();
+  /** At most one suggestion is being drafted at a time; submit/cancel clears it. */
+  private pendingSuggestion: PendingSuggestion | undefined;
+  private readonly disposables: vscode.Disposable[] = [];
 
   constructor(
     private readonly review: ReviewService,
@@ -42,6 +57,20 @@ export class CommentsController {
         return [new vscode.Range(0, 0, last, 0)];
       },
     };
+    // Closing the scratch editor without submitting cancels the draft.
+    this.disposables.push(
+      vscode.workspace.onDidCloseTextDocument((doc) => {
+        if (this.pendingSuggestion && doc.uri.toString() === this.pendingSuggestion.scratchUri.toString()) {
+          this.clearPendingSuggestion();
+        }
+      })
+    );
+  }
+
+  /** Forget the in-progress suggestion draft and clear its keybinding context. */
+  private clearPendingSuggestion(): void {
+    this.pendingSuggestion = undefined;
+    void vscode.commands.executeCommand('setContext', 'reviewlens.suggestionDraft', false);
   }
 
   /**
@@ -72,6 +101,7 @@ export class CommentsController {
 
   dispose(): void {
     this.controller.dispose();
+    this.disposables.forEach((d) => d.dispose());
   }
 
   /**
@@ -190,9 +220,11 @@ export class CommentsController {
   }
 
   /**
-   * Start a suggestion on the active head-side editor's selection: pre-fill a
-   * ```suggestion block with the selected text (the lines to replace) and post it
-   * as a thread anchored to that span, so the PR author can apply it in ADO.
+   * Start a suggestion on the active head-side editor's selection. Opens the
+   * selected lines in a scratch editor (same language, so syntax highlighting and
+   * multi-line editing work naturally), which the user edits and then submits
+   * with `reviewlens.submitSuggestion`. The draft is wrapped in a ```suggestion
+   * block and posted as a thread anchored to the selected span (FR-29).
    */
   async addSuggestionAtCursor(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
@@ -207,32 +239,64 @@ export class CommentsController {
     const startLine = sel.start.line;
     // An empty selection suggests a replacement for just the cursor's line.
     const endLine = sel.isEmpty || sel.end.character > 0 ? sel.end.line : sel.end.line - 1;
-    const range = new vscode.Range(startLine, 0, endLine, editor.document.lineAt(endLine).text.length);
+    const lastEnd = editor.document.lineAt(endLine).text.length;
+    const range = new vscode.Range(startLine, 0, endLine, lastEnd);
     const original = editor.document.getText(range);
 
-    const note = await vscode.window.showInputBox({
-      title: 'ReviewLens — suggest a change',
-      prompt: 'Edit the suggested replacement for the selected lines.',
-      value: original,
-      // A multi-line suggestion is common; keep the box from closing on Enter is
-      // not available, so users edit a single logical block here.
+    // Open a scratch document seeded with the selected text, in the same
+    // language, so the user edits a real multi-line buffer instead of an input box.
+    const scratch = await vscode.workspace.openTextDocument({
+      content: original,
+      language: editor.document.languageId,
     });
-    if (note === undefined) {
+    this.pendingSuggestion = {
+      filePath,
+      targetUri: editor.document.uri,
+      target: {
+        startLine: startLine + 1,
+        startOffset: 1,
+        endLine: endLine + 1,
+        endOffset: lastEnd + 1,
+      },
+      scratchUri: scratch.uri,
+    };
+    await vscode.window.showTextDocument(scratch, { preview: false });
+    void vscode.commands.executeCommand('setContext', 'reviewlens.suggestionDraft', true);
+    vscode.window.showInformationMessage(
+      'ReviewLens: edit the suggested replacement, then run "Submit suggestion" (Ctrl+K Ctrl+S).'
+    );
+  }
+
+  /**
+   * Submit the suggestion drafted in the scratch editor: wrap its current text in
+   * a ```suggestion block and post it as a thread on the original head file. Run
+   * from the scratch editor opened by `addSuggestionAtCursor`.
+   */
+  async submitSuggestion(): Promise<void> {
+    const pending = this.pendingSuggestion;
+    const editor = vscode.window.activeTextEditor;
+    if (!pending || !editor || editor.document.uri.toString() !== pending.scratchUri.toString()) {
+      vscode.window.showWarningMessage(
+        'ReviewLens: no suggestion draft is open. Start one with "Suggest a change on selected lines".'
+      );
       return;
     }
-    const body = '```suggestion\n' + note + '\n```';
-    const target: CommentTarget = {
-      startLine: startLine + 1,
-      startOffset: 1,
-      endLine: endLine + 1,
-      endOffset: editor.document.lineAt(endLine).text.length + 1,
-    };
+    const body = '```suggestion\n' + editor.document.getText() + '\n```';
     try {
-      const newId = await this.review.createComment(filePath, target, body);
+      const newId = await this.review.createComment(pending.filePath, pending.target, body);
       if (newId != null) {
-        await this.snapshotLine(editor.document.uri, filePath, newId, startLine);
+        await this.snapshotLine(
+          pending.targetUri,
+          pending.filePath,
+          newId,
+          pending.target.startLine - 1
+        );
       }
-      await this.renderForFile(filePath, editor.document.uri);
+      this.clearPendingSuggestion();
+      // Close the scratch editor and re-render the target so the new thread shows.
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await this.renderForFile(pending.filePath, pending.targetUri);
+      vscode.window.showInformationMessage('ReviewLens: suggestion posted.');
     } catch (e) {
       vscode.window.showErrorMessage(
         `ReviewLens: ${e instanceof Error ? e.message : String(e)}`

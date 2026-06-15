@@ -54,8 +54,21 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
         try {
-          const changed = await reviewService.syncThreads();
-          if (changed) {
+          const result = await reviewService.syncReview();
+          // A new iteration (author re-pushed): refresh the file list + cursor,
+          // reset viewed for the re-changed files, and surface a status hint.
+          if (result.iterationChanged) {
+            const current = reviewService.current;
+            if (current) {
+              const prId = current.pr.id;
+              await viewedStore.unset(prId, result.changedFilePaths);
+              changedFiles.setFiles(current.data.files, viewedStore.get(prId));
+              changedFiles.setOverview(current.pr, reviewService.overview);
+              cursor.setFiles(current.data.files);
+              changedFilesView.description = `#${prId} ${current.pr.title} · updated`;
+            }
+          }
+          if (result.iterationChanged || result.threadsChanged) {
             await renderActiveEditor();
           }
         } catch {
@@ -439,6 +452,10 @@ export function activate(context: vscode.ExtensionContext): void {
       comments.addSuggestionAtCursor()
     ),
 
+    vscode.commands.registerCommand('reviewlens.submitSuggestion', () =>
+      comments.submitSuggestion()
+    ),
+
     vscode.commands.registerCommand('reviewlens.applySuggestion', (thread: vscode.CommentThread) =>
       comments.applySuggestion(thread)
     ),
@@ -558,15 +575,14 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
 
     vscode.commands.registerCommand('reviewlens.searchComments', async () => {
-      const anchored = sortedAnchoredThreads();
-      if (anchored.length === 0) {
+      if (sortedAnchoredThreads().length === 0) {
         vscode.window.showInformationMessage('ReviewLens: no comments on this pull request.');
         return;
       }
       interface CommentItem extends vscode.QuickPickItem {
         thread: Thread;
       }
-      const items: CommentItem[] = anchored.map((t) => {
+      const toItem = (t: Thread): CommentItem => {
         const first = t.comments[0];
         const replies = t.comments.length - 1;
         return {
@@ -577,13 +593,41 @@ export function activate(context: vscode.ExtensionContext): void {
             (replies > 0 ? ` · ${replies} repl${replies === 1 ? 'y' : 'ies'}` : ''),
           thread: t,
         };
+      };
+
+      // A title-bar toggle filters the list to unresolved threads and back
+      // (FR-12), so the same picker serves "search all" and "only what's left".
+      const filterButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('filter'),
+        tooltip: 'Show unresolved only',
+      };
+      const filterFilledButton: vscode.QuickInputButton = {
+        iconPath: new vscode.ThemeIcon('filter-filled'),
+        tooltip: 'Show all comments',
+      };
+
+      const qp = vscode.window.createQuickPick<CommentItem>();
+      qp.matchOnDescription = true;
+      qp.matchOnDetail = true;
+      qp.placeholder = 'Filter by author, text, file, or line';
+      let unresolvedOnly = false;
+      const refresh = (): void => {
+        qp.title = `ReviewLens — search comments${unresolvedOnly ? ' (unresolved)' : ''}`;
+        qp.buttons = [unresolvedOnly ? filterFilledButton : filterButton];
+        qp.items = sortedAnchoredThreads(unresolvedOnly).map(toItem);
+      };
+      refresh();
+
+      const picked = await new Promise<CommentItem | undefined>((resolve) => {
+        qp.onDidTriggerButton(() => {
+          unresolvedOnly = !unresolvedOnly;
+          refresh();
+        });
+        qp.onDidAccept(() => resolve(qp.selectedItems[0]));
+        qp.onDidHide(() => resolve(undefined));
+        qp.show();
       });
-      const picked = await vscode.window.showQuickPick(items, {
-        title: 'ReviewLens — search comments',
-        placeHolder: 'Filter by author, text, file, or line',
-        matchOnDescription: true,
-        matchOnDetail: true,
-      });
+      qp.dispose();
       if (picked) {
         await revealThread(picked.thread);
       }

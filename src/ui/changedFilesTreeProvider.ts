@@ -6,16 +6,38 @@ import { FileStatus, ReviewerVote } from '../domain/types';
 class FileNode extends vscode.TreeItem {
   constructor(public readonly file: ChangedFile, viewed: boolean) {
     super(basename(file.path), vscode.TreeItemCollapsibleState.None);
-    this.description = `${viewed ? '✓ ' : ''}${statusLabel(file.status)} · ${dirname(file.path)}`;
+    this.description = `${viewed ? '✓ ' : ''}${statusLabel(file.status)}`;
     this.tooltip = file.path;
     this.contextValue = 'changedFile';
     this.iconPath = viewed ? new vscode.ThemeIcon('check') : statusIcon(file.status);
+    this.resourceUri = vscode.Uri.file(file.path);
     this.command = {
       command: 'reviewlens.openFileDiff',
       title: 'Open diff',
       arguments: [file],
     };
   }
+}
+
+/** A folder grouping in the Changed Files tree (compact: may span several path segments). */
+class FolderNode extends vscode.TreeItem {
+  constructor(
+    label: string,
+    /** Full path of this folder relative to the root, used to look up children. */
+    public readonly folderPath: string
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.Expanded);
+    this.iconPath = vscode.ThemeIcon.Folder;
+    this.resourceUri = vscode.Uri.file(folderPath);
+  }
+}
+
+/** A node in the in-memory file tree built from changed file paths. */
+interface TreeNode {
+  /** Child folders keyed by their immediate segment name. */
+  folders: Map<string, TreeNode>;
+  /** Files living directly in this folder. */
+  files: ChangedFile[];
 }
 
 class HintNode extends vscode.TreeItem {
@@ -136,6 +158,9 @@ export class ChangedFilesTreeProvider implements vscode.TreeDataProvider<vscode.
     if (node instanceof GroupNode) {
       return node.group === 'reviewers' ? this.reviewerNodes() : this.workItemNodes();
     }
+    if (node instanceof FolderNode) {
+      return this.folderChildren(node.folderPath);
+    }
     return [];
   }
 
@@ -183,8 +208,74 @@ export class ChangedFilesTreeProvider implements vscode.TreeDataProvider<vscode.
     if (this.files.length === 0) {
       return [new HintNode('No changed files.')];
     }
-    return this.files.map((f) => new FileNode(f, this.viewed.has(f.path)));
+    return this.folderChildren('');
   }
+
+  /**
+   * Build the file tree on demand and return the rows for the folder at `folderPath`
+   * (empty string = the Changed Files root). Folders sort before files; each list is
+   * alphabetical. Single-child folder chains are compacted into one row, Azure-style.
+   */
+  private folderChildren(folderPath: string): vscode.TreeItem[] {
+    const node = findNode(this.buildTree(), folderPath);
+    if (!node) {
+      return [];
+    }
+    const folders = [...node.folders.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([name, child]) => {
+        // Compact: collapse a chain of single-child folders into one row.
+        let label = name;
+        let path = join(folderPath, name);
+        let cur = child;
+        while (cur.files.length === 0 && cur.folders.size === 1) {
+          const [nextName, nextChild] = [...cur.folders.entries()][0];
+          label = `${label}/${nextName}`;
+          path = join(path, nextName);
+          cur = nextChild;
+        }
+        return new FolderNode(label, path);
+      });
+    const files = [...node.files]
+      .sort((a, b) => basename(a.path).localeCompare(basename(b.path)))
+      .map((f) => new FileNode(f, this.viewed.has(f.path)));
+    return [...folders, ...files];
+  }
+
+  private buildTree(): TreeNode {
+    const root: TreeNode = { folders: new Map(), files: [] };
+    for (const file of this.files) {
+      const segments = file.path.split('/');
+      const fileName = segments.pop()!;
+      let cur = root;
+      for (const seg of segments) {
+        let next = cur.folders.get(seg);
+        if (!next) {
+          next = { folders: new Map(), files: [] };
+          cur.folders.set(seg, next);
+        }
+        cur = next;
+      }
+      cur.files.push(file);
+    }
+    return root;
+  }
+}
+
+/** Walk the tree to the node at `path` ('' = root). Returns undefined if not found. */
+function findNode(root: TreeNode, path: string): TreeNode | undefined {
+  if (path === '') {
+    return root;
+  }
+  let cur: TreeNode | undefined = root;
+  for (const seg of path.split('/')) {
+    cur = cur?.folders.get(seg);
+  }
+  return cur;
+}
+
+function join(base: string, name: string): string {
+  return base === '' ? name : `${base}/${name}`;
 }
 
 function statusLabel(s: FileStatus): string {
@@ -237,9 +328,4 @@ function oneLine(s: string): string {
 function basename(path: string): string {
   const i = path.lastIndexOf('/');
   return i >= 0 ? path.slice(i + 1) : path;
-}
-
-function dirname(path: string): string {
-  const i = path.lastIndexOf('/');
-  return i >= 0 ? path.slice(0, i) : '';
 }

@@ -198,6 +198,54 @@ export class ReviewService {
     return threadsSignature(this.threads) !== before;
   }
 
+  /**
+   * Re-fetch both the review (files + commits) and threads, so a re-push by the
+   * author (a new PR iteration) is picked up: the changed-file list and the
+   * base/head commits are refreshed in place. Returns what moved so the caller
+   * can refresh the tree, reset viewed for re-changed files, and re-render.
+   * `changedFilePaths` is the set of files that differ from the previous
+   * iteration (added or whose content changed), used to scope a viewed reset.
+   */
+  async syncReview(): Promise<{
+    threadsChanged: boolean;
+    iterationChanged: boolean;
+    changedFilePaths: string[];
+  }> {
+    if (!this.active) {
+      return { threadsChanged: false, iterationChanged: false, changedFilePaths: [] };
+    }
+    const { client, pr } = this.active;
+    const prevHead = this.active.data.headCommit;
+    const threadsBefore = threadsSignature(this.threads);
+
+    const [data, threads] = await Promise.all([
+      client.getReview(pr.id, pr.repositoryId),
+      client.getThreads(pr.id, pr.repositoryId),
+    ]);
+
+    const iterationChanged = data.headCommit !== prevHead;
+    // On a new iteration the head moved, so every file's head text may have
+    // shifted; conservatively treat the whole new file set as re-changed for the
+    // viewed reset. (Per-file precision would need content hashes ADO doesn't
+    // give us here.)
+    const changedFilePaths = iterationChanged ? data.files.map((f) => f.path) : [];
+
+    this.active.data = data;
+    this.active.threads = threads;
+    this.active.changedPaths = new Set(data.files.map((f) => f.path.toLowerCase()));
+    // Drop cached file text from the old head so re-opened files fetch the new
+    // content (base-side entries keyed by the unchanged base commit still hit).
+    if (iterationChanged) {
+      this.active.contentCache.clear();
+    }
+
+    return {
+      threadsChanged: threadsSignature(threads) !== threadsBefore,
+      iterationChanged,
+      changedFilePaths,
+    };
+  }
+
   private async refreshThreads(): Promise<void> {
     if (!this.active) {
       return;
