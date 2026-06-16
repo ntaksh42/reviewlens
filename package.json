@@ -2,7 +2,7 @@
   "name": "reviewlens",
   "displayName": "ReviewLens",
   "description": "Navigation-first pull request review for Azure DevOps.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "reviewlens",
   "license": "MIT",
   "engines": {
