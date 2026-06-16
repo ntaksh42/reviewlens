@@ -35,20 +35,55 @@ npm run package    # vsce package -> reviewlens-<version>.vsix
 ### Tests
 
 `test/runTest.js` boots a VS Code instance and runs everything matching
-`test/suite/**/*.test.js` via Mocha (BDD). Two kinds of test exist:
+`test/suite/**/*.test.js` via Mocha (BDD). Three kinds of test exist:
 
 - **Activation tests** (`extension.test.js`) need the VS Code host — they assert
   the extension activates and registers its commands/views.
-- **Pure-logic tests** (`suggestion.test.js`) `require` from `dist/test/`, not
-  `src/`. This is why `esbuild.js` emits a *second* bundle
-  (`src/domain/suggestion.ts` -> `dist/test/suggestion.js`): the unit tests
-  can't reach into the bundled extension, so vscode-free helpers are re-bundled
-  standalone. **If you add a unit-testable pure helper, add its entry point to
-  the `testCtx` in `esbuild.js`** or the test won't be able to import it.
+- **Pure-logic tests** (`suggestion.test.js`, `navigation.test.js`,
+  `navigationCursor.test.js`, `anchor.test.js`, `adoClient.test.js`) `require`
+  from `dist/test/`, not `src/`. This is why `esbuild.js` emits *extra* standalone
+  bundles, one per entry in `testEntries` (e.g. `src/domain/suggestion.ts` ->
+  `dist/test/suggestion.js`): the unit tests can't reach into the bundled
+  extension, so vscode-free helpers are re-bundled standalone. **If you add a
+  unit-testable pure helper, add an entry to `testEntries` in `esbuild.js`** (each
+  gets its own flat `dist/test/<name>.js`) or the test won't be able to import it.
+  `adoClient.ts` keeps `azure-devops-node-api` external so its bundle stays small.
+  The pattern for testing vscode-coupled logic is to extract the pure core into
+  `domain/` and leave a thin wrapper (e.g. `domain/navigation.ts` backs
+  `extension.ts`'s comment jump; `domain/anchor.ts` backs the FR-10 re-anchor in
+  `ui/commentsController.ts`).
+- **Live E2E** (`ado.e2e.test.js`) drives the real `AdoClient` against a real PR.
+  It is `describe.skip`ped unless `ADO_PAT` is set, so `npm test` and CI stay
+  offline. Read checks run with just `ADO_PAT`; write checks (comment/vote, with
+  create+cleanup) are gated behind `ADO_E2E_WRITE=1`. Target is overridable via
+  `ADO_ORG`/`ADO_PROJECT`/`ADO_REPO`/`ADO_E2E_BRANCH`/`ADO_E2E_PR`. Note: MSA-backed
+  orgs reject AAD bearer tokens (TF400813) — a PAT is required.
 
 Tests are plain JS (`.js`, not `.ts`). To run a single test, narrow with Mocha
 grep, e.g. `node test/runTest.js` after editing the suite, or temporarily use
 `.only` in the spec.
+
+### UI walkthrough (`npm run test:ui`)
+
+`test/ui/*.ui.test.js` is a separate suite run by **ExTester**
+(`vscode-extension-tester`), *not* the `npm test` runner. It launches a real
+VS Code window over WebDriver, attaches to a live PR, drives the navigation
+commands, and screenshots each step into `test-resources/screenshots/<ts>/` so
+the diff/comment jumps can be verified visually. It is the only test that
+exercises VS Code's own diff editor (e.g. `nextChange`'s roll-over to the next
+file), which the pure tests can't reach.
+
+- Needs `ADO_PAT` and a workspace checked out on the PR's **source branch**
+  (branch-attach keys off the open branch). `scripts/ui-verify.ps1` clones the
+  fixture PR's branch into a temp dir and runs the suite; or set `RL_UI_WORKSPACE`
+  to your own checkout. Without `ADO_PAT` the suite self-skips.
+- `extest setup-and-run` downloads VS Code + ChromeDriver into `test-resources/`
+  (gitignored) on first run and packages/install the extension, so the first run
+  is slow. Settings are injected from `test/ui/settings.json`.
+- Gotcha: recent VS Code shows a Copilot **onboarding overlay**
+  (`div.onboarding-a-overlay`) that ignores Escape and intercepts clicks; the
+  suite's `dismissModals()` closes it via the DOM before running commands. If new
+  VS Code versions block again, that helper is where to look.
 
 ## Architecture
 

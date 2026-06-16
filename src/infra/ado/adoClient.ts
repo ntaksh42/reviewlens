@@ -4,6 +4,7 @@ import {
   CommentThreadStatus,
   CommentType,
   GitPullRequest,
+  GitPullRequestChange,
   GitPullRequestCommentThread,
   GitPullRequestSearchCriteria,
   GitVersionType,
@@ -157,15 +158,7 @@ export class AdoClient {
       this.config.project
     );
 
-    const files: ChangedFile[] = (changes.changeEntries ?? [])
-      .filter((e) => e.item?.path && !e.item.isFolder)
-      .map((e) => ({
-        path: stripLead(e.item!.path!),
-        status: mapStatus(e.changeType),
-        hunks: [],
-        viewed: false,
-        riskScore: null,
-      }));
+    const files = mapChangeEntries(changes.changeEntries);
 
     return { repositoryId, baseCommit, headCommit, files };
   }
@@ -421,6 +414,25 @@ function mapReviewerVote(vote?: number): ReviewerVote {
     default:
       return 'none';
   }
+}
+
+/**
+ * Map a PR iteration's change entries to the changed-files list. Exported for
+ * unit testing because the path/status mapping has a non-obvious quirk: deletes
+ * carry no item.path (the path lives in originalPath), so a naive item.path
+ * filter drops removed files from the tree entirely.
+ */
+export function mapChangeEntries(entries?: GitPullRequestChange[]): ChangedFile[] {
+  return (entries ?? [])
+    .map((e) => ({ path: e.item?.path ?? e.originalPath, isFolder: e.item?.isFolder, e }))
+    .filter((x) => x.path && !x.isFolder)
+    .map(({ path, e }) => ({
+      path: stripLead(path!),
+      status: mapStatus(e.changeType),
+      hunks: [],
+      viewed: false,
+      riskScore: null,
+    }));
 }
 
 function mapStatus(ct?: VersionControlChangeType): FileStatus {

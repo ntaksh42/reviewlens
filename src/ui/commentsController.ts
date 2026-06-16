@@ -1,20 +1,15 @@
 import * as vscode from 'vscode';
 import { ReviewService } from '../app/reviewService';
 import { CommentTarget } from '../infra/ado/adoClient';
-import { AnchorStore, normalizeAnchorText } from '../infra/state/anchorStore';
+import { AnchorStore } from '../infra/state/anchorStore';
 import { Comment as DomainComment } from '../domain/models';
 import { extractSuggestion } from '../domain/suggestion';
+import { Drift, normalizeAnchorText, resolveAnchorLine as resolveAnchorLinePure } from '../domain/anchor';
 import { headDocPath } from './diffContentProvider';
 
 interface TrackedThread extends vscode.CommentThread {
   adoThreadId?: number;
 }
-
-/** Where a thread ended up relative to its stored anchor. */
-type Drift = 'none' | 'moved' | 'lost';
-
-/** How far to search for a drifted anchor line, in each direction. */
-const REANCHOR_WINDOW = 200;
 
 /**
  * Bridges ADO comment threads and VS Code's comment UI. Threads render on the
@@ -401,23 +396,12 @@ function resolveAnchorLine(
   if (!doc) {
     return { line: storedLine0, drift: 'none' };
   }
-  const last = Math.max(0, doc.lineCount - 1);
-  const stored = Math.min(Math.max(0, storedLine0), last);
-  if (!snapshotText) {
-    return { line: stored, drift: 'none' };
-  }
-  if (lineTextNorm(doc, stored) === snapshotText) {
-    return { line: stored, drift: 'none' };
-  }
-  // Walk outward from the stored line so the nearest match wins ties.
-  for (let delta = 1; delta <= REANCHOR_WINDOW; delta++) {
-    for (const candidate of [stored - delta, stored + delta]) {
-      if (candidate >= 0 && candidate <= last && lineTextNorm(doc, candidate) === snapshotText) {
-        return { line: candidate, drift: 'moved' };
-      }
-    }
-  }
-  return { line: stored, drift: 'lost' };
+  return resolveAnchorLinePure(
+    doc.lineCount,
+    (line0) => lineTextNorm(doc, line0),
+    storedLine0,
+    snapshotText
+  );
 }
 
 function lineTextNorm(doc: vscode.TextDocument, line0: number): string {

@@ -10,6 +10,9 @@ import { AnchorStore } from './infra/state/anchorStore';
 import { getCurrentBranch, repoRoot } from './infra/git/repo';
 import { getAutoAttachBranchPr, getSyncInterval } from './infra/config';
 import { ChangedFile, PullRequestSummary, Thread } from './domain/models';
+import { pickComment, sortAnchoredThreads } from './domain/navigation';
+import { branchKey, shouldAutoAttach } from './domain/attach';
+import { oneLine, voteLabel } from './domain/labels';
 import { PrVote } from './domain/types';
 import { createLogger } from './common/logger';
 
@@ -132,7 +135,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       return;
     }
-    const key = `${open.repoRoot}#${open.branch}`;
+    const key = branchKey(open.repoRoot, open.branch);
     let pr: PullRequestSummary | undefined;
     try {
       pr = await reviewService.findByBranch(open.branch);
@@ -194,10 +197,10 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!open) {
       return;
     }
-    const key = `${open.repoRoot}#${open.branch}`;
+    const key = branchKey(open.repoRoot, open.branch);
     // Already attached to this branch, or already tried it and found no PR:
     // don't re-query ADO on every editor switch. A branch switch changes `key`.
-    if (key === attachedBranchKey || key === autoTriedKey) {
+    if (!shouldAutoAttach(key, attachedBranchKey, autoTriedKey)) {
       return;
     }
     autoTriedKey = key;
@@ -224,13 +227,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   /** Anchored threads sorted by file then line, the order navigation walks. */
   function sortedAnchoredThreads(unresolvedOnly = false): Thread[] {
-    return reviewService.threads
-      .filter((t) => t.anchor && (!unresolvedOnly || t.status !== 'closed'))
-      .sort((a, b) => {
-        const fa = a.anchor!.filePath;
-        const fb = b.anchor!.filePath;
-        return fa === fb ? a.anchor!.start.line - b.anchor!.start.line : fa.localeCompare(fb);
-      });
+    return sortAnchoredThreads(reviewService.threads, unresolvedOnly);
   }
 
   /** (filePath, line) of the active head-side editor's cursor, for "next from here". */
@@ -295,25 +292,10 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       return;
     }
-    const here = currentLocation();
-    const isAfter = (t: Thread): boolean => {
-      if (!here) {
-        return true;
-      }
-      const a = t.anchor!;
-      return (
-        a.filePath > here.filePath ||
-        (a.filePath === here.filePath && a.start.line > here.line)
-      );
-    };
-    let target: Thread;
-    if (dir === 'next') {
-      target = list.find(isAfter) ?? list[0];
-    } else {
-      const before = list.filter((t) => !isAfter(t) && !samePosition(t, here));
-      target = before[before.length - 1] ?? list[list.length - 1];
+    const target = pickComment(list, currentLocation(), dir);
+    if (target) {
+      await revealThread(target);
     }
-    await revealThread(target);
   }
 
   /** True when a base↔head diff for `filePath` is already open in some tab. */
@@ -722,37 +704,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   void maybeAutoAttach();
   log.info('ReviewLens activated.');
-}
-
-/** True when a thread sits exactly on the cursor's current location. */
-function samePosition(t: Thread, here: { filePath: string; line: number } | undefined): boolean {
-  return (
-    here != null &&
-    t.anchor != null &&
-    t.anchor.filePath === here.filePath &&
-    t.anchor.start.line === here.line
-  );
-}
-
-/** Collapse a comment body to a single line for list labels. */
-function oneLine(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
-}
-
-/** Human-readable confirmation shown after a vote is recorded. */
-function voteLabel(vote: PrVote): string {
-  switch (vote) {
-    case 'approve':
-      return 'approved';
-    case 'approveWithSuggestions':
-      return 'approved with suggestions';
-    case 'waitForAuthor':
-      return 'marked “wait for the author”';
-    case 'reject':
-      return 'rejected';
-    case 'reset':
-      return 'vote reset';
-  }
 }
 
 export function deactivate(): void {}

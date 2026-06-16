@@ -45,7 +45,10 @@ See [docs/SPEC.md](docs/SPEC.md) for the full specification and decision log.
 npm install
 npm run build      # esbuild bundle -> dist/extension.js
 npm run typecheck  # tsc --noEmit
-npm test           # @vscode/test-electron activation test
+npm test           # @vscode/test-electron: activation + pure-logic units
+                   # (live ADO E2E runs too when ADO_PAT is set)
+npm run test:ui    # ExTester: real VS Code window, navigation + screenshots
+                   # (needs ADO_PAT; see scripts/ui-verify.ps1)
 ```
 
 Press `F5` (Run ReviewLens) to launch the Extension Development Host.

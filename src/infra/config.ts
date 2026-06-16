@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { normalizeSyncInterval } from '../domain/attach';
 
 export interface AdoConfig {
   orgUrl: string;
@@ -34,5 +35,5 @@ export function getAutoAttachBranchPr(): boolean {
  */
 export function getSyncInterval(): number {
   const raw = vscode.workspace.getConfiguration('reviewlens').get<number>('syncInterval', 30);
-  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+  return normalizeSyncInterval(raw);
 }

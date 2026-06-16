@@ -1,5 +1,9 @@
 import * as vscode from 'vscode';
 
+// Re-exported from domain so existing importers keep working; the normalization
+// rule itself is pure and lives in domain/anchor (FR-10).
+export { normalizeAnchorText } from '../../domain/anchor';
+
 /** A remembered anchor line, so a thread can be relocated if the head drifts. */
 export interface AnchorSnapshot {
   filePath: string;
@@ -34,9 +38,4 @@ export class AnchorStore {
   private all(prId: number): Record<string, AnchorSnapshot> {
     return { ...this.state.get<Record<string, AnchorSnapshot>>(this.key(prId), {}) };
   }
-}
-
-/** Whitespace-collapsed line text; '' for blank lines (never used as an anchor). */
-export function normalizeAnchorText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ');
 }

@@ -1,0 +1,21 @@
+{
+  "reviewlens.orgUrl": "https://dev.azure.com/aksh0402",
+  "reviewlens.project": "PersonalProject",
+  "reviewlens.repository": "TestRepos",
+  "reviewlens.autoAttachBranchPr": true,
+  "reviewlens.syncInterval": 0,
+  "workbench.colorTheme": "Default Dark Modern",
+  "window.zoomLevel": 0,
+  "editor.minimap.enabled": false,
+  "git.enabled": true,
+  "git.autoRepositoryDetection": true,
+  "telemetry.telemetryLevel": "off",
+  "update.mode": "none",
+  "extensions.autoCheckUpdates": false,
+  "workbench.startupEditor": "none",
+  "workbench.welcomePage.walkthroughs.openOnInstall": false,
+  "chat.commandCenter.enabled": false,
+  "workbench.enableExperiments": false,
+  "workbench.welcome.experimental.startEntryPoint": "none",
+  "security.workspace.trust.enabled": false
+}

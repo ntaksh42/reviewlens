@@ -334,7 +334,9 @@
     "package": "vsce package",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build",
-    "test": "node test/runTest.js"
+    "test": "node test/runTest.js",
+    "pretest:ui": "npm run build",
+    "test:ui": "extest setup-and-run ./test/ui/*.ui.test.js --storage ./test-resources --code_settings ./test/ui/settings.json --mocha_config ./test/ui/.mocharc-ui.js"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -344,7 +346,8 @@
     "esbuild": "^0.28.1",
     "glob": "^13.0.6",
     "mocha": "^11.7.6",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vscode-extension-tester": "^8.23.0"
   },
   "dependencies": {
     "azure-devops-node-api": "^14.0.0"
