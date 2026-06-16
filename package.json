@@ -20,7 +20,7 @@
         {
           "id": "reviewlens",
           "title": "ReviewLens",
-          "icon": "$(git-pull-request)"
+          "icon": "media/reviewlens.svg"
         }
       ]
     },
