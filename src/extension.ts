@@ -243,6 +243,26 @@ export function activate(context: vscode.ExtensionContext): void {
     return filePath ? { filePath, line: editor.selection.active.line + 1 } : undefined;
   }
 
+  /**
+   * Current line of the diff's head (modified) pane, located by URI rather than
+   * via `activeTextEditor`. The diff has two text editors; reading whichever one
+   * happens to be focused meant next/prev-change sometimes compared the base
+   * pane's line to the head pane's, making the rollover decision flip at random
+   * (the jittery navigation). Matching on the head URI keeps the reading stable.
+   */
+  function headPaneLine(): number | undefined {
+    const current = reviewService.current;
+    const file = cursor.current();
+    if (!current || !file) {
+      return undefined;
+    }
+    const head = headUri(current.pr.id, file.path, reviewService.localPath).toString();
+    const editor = vscode.window.visibleTextEditors.find(
+      (e) => e.document.uri.toString() === head
+    );
+    return editor?.selection.active.line;
+  }
+
   /** Open the thread's file, move the cursor to its anchor line, and show it. */
   async function revealThread(thread: Thread): Promise<void> {
     const anchor = thread.anchor;
@@ -551,15 +571,21 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Step to the next change in the open diff. compareEditor.nextChange wraps to
     // the top at the last change, so detect "didn't move forward" (same line or it
-    // jumped backward) and roll over to the next file's first change instead.
+    // jumped backward) and roll over to the next file instead. Both readings come
+    // from the head pane (headPaneLine) so the comparison can't flip on focus.
     vscode.commands.registerCommand('reviewlens.nextChange', async () => {
-      const before = vscode.window.activeTextEditor?.selection.active.line;
+      const before = headPaneLine();
       await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
-      const after = vscode.window.activeTextEditor?.selection.active.line;
+      const after = headPaneLine();
       if (before != null && after != null && after <= before) {
         const file = cursor.next();
         if (file) {
           await vscode.commands.executeCommand('reviewlens.openFileDiff', file);
+          // Land on the new file's first change, not line 0 — otherwise a file
+          // whose first change sits at the top reads as "already past it" and
+          // gets skipped on the next step.
+          await vscode.commands.executeCommand('cursorTop');
+          await vscode.commands.executeCommand('workbench.action.compareEditor.nextChange');
         }
       }
     }),
@@ -567,9 +593,9 @@ export function activate(context: vscode.ExtensionContext): void {
     // Mirror of nextChange: when stepping back didn't move backward (wrapped to the
     // bottom or stayed put), open the previous file and land on its last change.
     vscode.commands.registerCommand('reviewlens.prevChange', async () => {
-      const before = vscode.window.activeTextEditor?.selection.active.line;
+      const before = headPaneLine();
       await vscode.commands.executeCommand('workbench.action.compareEditor.previousChange');
-      const after = vscode.window.activeTextEditor?.selection.active.line;
+      const after = headPaneLine();
       if (before != null && after != null && after >= before) {
         const file = cursor.prev();
         if (file) {
