@@ -1,0 +1,10 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- ReviewLens: a magnifying glass (the "lens") with a diff +/- inside.
+       Single-color silhouette; the activity bar masks it with the theme foreground. -->
+  <path fill-rule="evenodd" clip-rule="evenodd"
+        d="M9.5 1.5a8 8 0 1 0 4.74 14.45l5.4 5.41a1.4 1.4 0 0 0 1.98-1.98l-5.41-5.4A8 8 0 0 0 9.5 1.5Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z"/>
+  <!-- diff plus (additions) -->
+  <path d="M8.6 5.4h1.8v2.1h2.1v1.8h-2.1v2.1H8.6V9.3H6.5V7.5h2.1V5.4Z"/>
+  <!-- diff minus (deletions) -->
+  <path d="M6.5 12.6h6v1.7h-6z"/>
+</svg>
